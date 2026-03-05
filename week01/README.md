@@ -189,13 +189,6 @@ cv.destroyAllWindows()
 
 ## Practice 02: 마우스로 그림 그리기
 
-### 주요 코드 설명
-- OpenCV를 사용하여 soccer.jpg 이미지를 읽어옵니다.
-- 마우스 이벤트를 처리하여 좌클릭으로 파란색, 우클릭으로 빨간색 원을 그립니다.
-- '+' 키로 붓 크기를 증가, '-' 키로 감소시킬 수 있습니다.
-- 'q' 키로 프로그램을 종료합니다.
-- 무한 루프에서 이미지를 계속 업데이트하여 실시간으로 그림을 그릴 수 있습니다.
-
 ### 전체 코드
 ```python
 # 프로그램 종료 등을 위한 시스템 라이브러리
@@ -299,18 +292,200 @@ while True:
 cv.destroyAllWindows()
 ```
 
+## 주요 코드 설명
+
+### 1. 붓 크기 및 그리기 상태 변수 설정
+
+```python
+brush_size = 5
+drawing = False
+color = (255, 0, 0)
+```
+
+마우스를 이용한 그림 그리기에 필요한 **기본 상태 변수**를 설정합니다.
+
+- `brush_size` : 붓의 크기를 저장하는 변수
+- `drawing` : 마우스를 누른 상태에서 드래그 중인지 여부를 저장
+- `color` : 붓의 색상을 저장 (BGR 기준)
+
+기본값은 **파란색 붓**으로 설정됩니다.
+
+---
+
+### 2. 마우스 이벤트 처리 함수 정의
+
+```python
+def draw(event, x, y, flags, param):
+```
+
+마우스 이벤트가 발생할 때 실행되는 **콜백 함수**입니다.
+
+OpenCV는 마우스 이벤트 발생 시 다음 정보를 전달합니다.
+
+- `event` : 발생한 마우스 이벤트 종류
+- `x, y` : 마우스 좌표
+- `flags` : 이벤트 상태 정보
+- `param` : 추가 파라미터
+
+---
+
+### 3. 좌클릭 시 그리기 시작 (파란색)
+
+```python
+if event == cv.EVENT_LBUTTONDOWN:
+    drawing = True
+    color = (255, 0, 0)
+```
+
+마우스 **좌클릭 버튼을 누르면** 다음 동작을 수행합니다.
+
+- 드래그 상태(`drawing`)를 **True로 변경**
+- 붓 색상을 **파란색(BGR)** 으로 설정
+
+이 상태에서 마우스를 움직이면 그림이 그려집니다.
+
+---
+
+### 4. 우클릭 시 그리기 시작 (빨간색)
+
+```python
+elif event == cv.EVENT_RBUTTONDOWN:
+    drawing = True
+    color = (0, 0, 255)
+```
+
+마우스 **우클릭 버튼을 누르면**
+
+- 드래그 상태를 **True로 변경**
+- 붓 색상을 **빨간색(BGR)** 으로 설정
+
+---
+
+### 5. 마우스 이동 시 그림 그리기
+
+```python
+elif event == cv.EVENT_MOUSEMOVE:
+    if drawing:
+        cv.circle(img, (x, y), brush_size, color, -1)
+```
+
+마우스를 이동할 때 발생하는 이벤트입니다.
+
+- `drawing` 상태일 때만 그림을 그립니다.
+- 현재 마우스 위치 `(x, y)`에 **원을 그려 붓 효과를 생성**합니다.
+
+`cv.circle()` 함수
+
+- `(x, y)` : 중심 좌표
+- `brush_size` : 원의 반지름
+- `color` : 붓 색상
+- `-1` : 원 내부를 채움
+
+---
+
+### 6. 마우스 버튼을 놓으면 그리기 종료
+
+```python
+elif event == cv.EVENT_LBUTTONUP or event == cv.EVENT_RBUTTONUP:
+    drawing = False
+```
+
+마우스 버튼을 놓으면
+
+- 드래그 상태를 **False로 변경**
+- 그림 그리기가 종료됩니다.
+
+---
+
+### 7. 마우스 이벤트 등록
+
+```python
+cv.namedWindow('Paint')
+cv.setMouseCallback('Paint', draw)
+```
+
+OpenCV 창에 **마우스 이벤트를 연결**합니다.
+
+- `cv.namedWindow()` : 창 생성
+- `cv.setMouseCallback()` : 마우스 이벤트 발생 시 실행할 함수 등록
+
+즉 **Paint 창에서 발생하는 마우스 이벤트가 `draw()` 함수로 전달됩니다.**
+
+---
+
+### 8. 실시간 화면 갱신을 위한 반복문
+
+```python
+while True:
+```
+
+프로그램이 종료될 때까지 **무한 반복 루프**를 실행합니다.
+
+이 루프를 통해
+
+- 화면을 계속 업데이트
+- 마우스 입력
+- 키보드 입력
+
+을 실시간으로 처리할 수 있습니다.
+
+---
+
+### 9. 키보드 입력 처리
+
+```python
+key = cv.waitKey(1) & 0xFF
+```
+
+키보드 입력을 1ms 동안 대기하고 값을 저장합니다.
+
+`& 0xFF` 연산은 **플랫폼에 따라 발생하는 키 값 차이를 제거하기 위해 사용됩니다.**
+
+---
+
+### 10. 프로그램 종료 키
+
+```python
+if key == ord('q'):
+    break
+```
+
+'q' 키를 누르면
+
+- 반복문을 종료하고
+- 프로그램이 종료됩니다.
+
+---
+
+### 11. 붓 크기 증가
+
+```python
+elif key == ord('+'):
+    brush_size = min(15, brush_size + 1)
+```
+
+'+' 키를 누르면 **붓 크기가 증가합니다.**
+
+- 최대 크기는 **15**로 제한됩니다.
+
+---
+
+### 12. 붓 크기 감소
+
+```python
+elif key == ord('-'):
+    brush_size = max(1, brush_size - 1)
+```
+
+'-' 키를 누르면 **붓 크기가 감소합니다.**
+
+- 최소 크기는 **1**로 제한됩니다.
+
 ### 실행 결과
 <img width="2879" height="1700" alt="image" src="https://github.com/user-attachments/assets/17277542-9d76-4609-ae3a-cdf5177fa2e8" />
 
 
 ## Practice 03: ROI 선택 및 저장
-
-### 주요 코드 설명
-- OpenCV를 사용하여 soccer.jpg 이미지를 읽어옵니다.
-- 마우스로 드래그하여 ROI(Region of Interest)를 선택합니다.
-- 선택된 영역을 사각형으로 표시하고, 별도 창에 ROI를 출력합니다.
-- 'r' 키로 선택을 리셋, 's' 키로 ROI를 roi.png로 저장합니다.
-- 'q' 키로 프로그램을 종료합니다.
 
 ### 전체 코드
 ```python
@@ -440,6 +615,224 @@ while True:
 # 프로그램 종료 시 모든 OpenCV 창을 닫음
 cv.destroyAllWindows()
 ```
+
+## 주요 코드 설명
+
+### 1. 원본 이미지 복사
+
+```python
+clone = img.copy()
+```
+
+ROI 선택 과정에서 **이미지 위에 사각형을 계속 그리기 때문에 원본 이미지를 보존하기 위해 복사본을 생성**합니다.
+
+- `clone` : 원본 이미지를 저장하는 변수
+- ROI 선택 중 사각형을 다시 그릴 때 **기존 사각형을 제거하기 위해 사용됩니다.**
+
+---
+
+### 2. ROI 선택 상태 변수
+
+```python
+start_point = None
+drawing = False
+roi = None
+```
+
+ROI 선택을 위해 필요한 상태 변수들입니다.
+
+- `start_point` : ROI 선택 시작 좌표 저장
+- `drawing` : 마우스 드래그 중인지 여부
+- `roi` : 선택된 ROI 이미지를 저장하는 변수
+
+---
+
+### 3. 마우스 이벤트 처리 함수
+
+```python
+def select_roi(event, x, y, flags, param):
+```
+
+마우스 이벤트가 발생할 때 실행되는 **콜백 함수**입니다.
+
+OpenCV는 마우스 이벤트 발생 시 다음 정보를 전달합니다.
+
+- `event` : 발생한 마우스 이벤트 종류
+- `x, y` : 마우스 좌표
+- `flags` : 이벤트 상태
+- `param` : 추가 전달 파라미터
+
+---
+
+### 4. ROI 선택 시작
+
+```python
+if event == cv.EVENT_LBUTTONDOWN:
+    drawing = True
+    start_point = (x, y)
+```
+
+마우스 **좌클릭 버튼을 누르면 ROI 선택이 시작됩니다.**
+
+- `drawing = True` → 드래그 상태 시작
+- 현재 마우스 좌표 `(x, y)`를 **ROI 시작 좌표**로 저장
+
+---
+
+### 5. 드래그 중 ROI 영역 표시
+
+```python
+elif event == cv.EVENT_MOUSEMOVE:
+    if drawing:
+        img = clone.copy()
+        cv.rectangle(img, start_point, (x, y), (0, 255, 0), 2)
+```
+
+마우스를 드래그하면 **ROI 선택 영역을 사각형으로 표시**합니다.
+
+동작 과정
+
+1. `img = clone.copy()`  
+   → 기존 사각형을 지우기 위해 원본 이미지로 복원
+
+2. `cv.rectangle()`  
+   → 시작 좌표부터 현재 마우스 위치까지 **초록색 사각형 표시**
+
+`cv.rectangle()` 주요 파라미터
+
+- `start_point` : 시작 좌표
+- `(x, y)` : 현재 마우스 좌표
+- `(0,255,0)` : 초록색
+- `2` : 선 두께
+
+---
+
+### 6. ROI 선택 완료
+
+```python
+elif event == cv.EVENT_LBUTTONUP:
+    drawing = False
+```
+
+마우스 버튼을 놓으면
+
+- 드래그 상태 종료
+- ROI 선택이 완료됩니다.
+
+---
+
+### 7. 좌표 정렬
+
+```python
+x0, y0 = start_point
+x1, y1 = x, y
+
+x_min, x_max = min(x0, x1), max(x0, x1)
+y_min, y_max = min(y0, y1), max(y0, y1)
+```
+
+마우스를 **어떤 방향으로 드래그해도 ROI가 정상적으로 선택되도록 좌표를 정렬**합니다.
+
+예를 들어
+
+```
+왼쪽 → 오른쪽
+오른쪽 → 왼쪽
+위 → 아래
+아래 → 위
+```
+
+모든 경우에서 올바른 ROI 영역을 만들 수 있습니다.
+
+---
+
+### 8. ROI 영역 추출
+
+```python
+roi = clone[y_min:y_max, x_min:x_max]
+```
+
+NumPy 슬라이싱을 이용하여 **선택한 영역의 이미지를 추출**합니다.
+
+이미지는 NumPy 배열이기 때문에
+
+```
+image[세로 범위, 가로 범위]
+```
+
+형태로 ROI를 추출할 수 있습니다.
+
+---
+
+### 9. ROI 이미지 출력
+
+```python
+if roi.size != 0:
+    cv.imshow("ROI", roi)
+```
+
+선택된 ROI 영역이 존재하면
+
+- 별도의 **ROI 창을 생성하여 이미지 출력**
+
+`roi.size != 0` 조건을 통해  
+**빈 영역 선택 오류를 방지**합니다.
+
+---
+
+### 10. 마우스 이벤트 등록
+
+```python
+cv.namedWindow("Image")
+cv.setMouseCallback("Image", select_roi)
+```
+
+OpenCV 창에 **마우스 이벤트를 연결**합니다.
+
+- `cv.namedWindow()` → 창 생성
+- `cv.setMouseCallback()` → 마우스 이벤트 처리 함수 등록
+
+즉 **Image 창에서 발생하는 마우스 이벤트가 `select_roi()` 함수로 전달됩니다.**
+
+---
+
+### 11. ROI 초기화 기능
+
+```python
+elif key == ord('r'):
+    img = clone.copy()
+    roi = None
+```
+
+`r` 키를 누르면
+
+- 이미지가 **원본 상태로 복원**
+- 기존 ROI 선택이 **초기화**
+
+---
+
+### 12. ROI 이미지 저장
+
+```python
+elif key == ord('s'):
+    if roi is not None:
+        cv.imwrite("roi.png", roi)
+```
+
+`s` 키를 누르면 선택한 ROI 이미지를 **파일로 저장**합니다.
+
+- 파일 이름 : `roi.png`
+- `cv.imwrite()` 함수 사용
+
+---
+
+### 13. 저장 완료 메시지 출력
+
+```python
+print("ROI 이미지가 roi.png로 저장되었습니다.")
+```
+
+ROI 저장이 완료되면 **터미널에 메시지를 출력**하여 사용자에게 저장 여부를 알려줍니다.
 
 ### 실행 결과
 <img width="2676" height="1604" alt="image" src="https://github.com/user-attachments/assets/92909417-a0df-49b4-9213-50e36e48e081" />
