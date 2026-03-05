@@ -51,11 +51,7 @@ cv.destroyAllWindows()
 ```
 
 ### 실행 결과
-```
-[ WARN:0@0.012] global loadsave.cpp:278 cv::findDecoder imread_('soccer.jpg'): can't open/read file: check file path/integrity
-파일을 찾을 수 없습니다.
-```
-(실행 시 soccer.jpg 파일이 없어 프로그램이 종료되었습니다. 정상 실행 시 원본과 흑백 이미지가 연결된 창이 표시됩니다.)
+<img width="2866" height="1014" alt="image" src="https://github.com/user-attachments/assets/06baf2e7-cf8a-4987-8693-f2bc5e1d68ef" />
 
 ## Practice 02: 마우스로 그림 그리기
 
@@ -170,11 +166,8 @@ cv.destroyAllWindows()
 ```
 
 ### 실행 결과
-```
-[ WARN:0@0.012] global loadsave.cpp:278 cv::findDecoder imread_('soccer.jpg'): can't open/read file: check file path/integrity
-파일을 찾을 수 없습니다.
-```
-(실행 시 soccer.jpg 파일이 없어 프로그램이 종료되었습니다. 정상 실행 시 마우스로 그림을 그릴 수 있는 창이 표시됩니다.)
+<img width="2879" height="1700" alt="image" src="https://github.com/user-attachments/assets/17277542-9d76-4609-ae3a-cdf5177fa2e8" />
+
 
 ## Practice 03: ROI 선택 및 저장
 
@@ -315,8 +308,6 @@ cv.destroyAllWindows()
 ```
 
 ### 실행 결과
-```
-[ WARN:0@0.010] global loadsave.cpp:278 cv::findDecoder imread_('soccer.jpg'): can't open/read file: check file path/integrity
-파일을 찾을 수 없습니다.
-```
-(실행 시 soccer.jpg 파일이 없어 프로그램이 종료되었습니다. 정상 실행 시 마우스로 ROI를 선택할 수 있는 창이 표시됩니다.)
+<img width="2676" height="1604" alt="image" src="https://github.com/user-attachments/assets/92909417-a0df-49b4-9213-50e36e48e081" />
+<img width="382" height="518" alt="image" src="https://github.com/user-attachments/assets/9279be20-1bb3-4b66-8eb9-c131e0b03362" />
+
