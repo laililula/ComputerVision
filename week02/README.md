@@ -7,69 +7,145 @@
 ## 전체 코드
 
 ```python
+# OpenCV 라이브러리 (이미지 처리 및 카메라 캘리브레이션 기능 제공)
 import cv2
+
+# 수치 연산 및 배열 처리를 위한 NumPy
 import numpy as np
+
+# 특정 패턴에 맞는 파일 목록을 가져오기 위한 라이브러리
 import glob
+
+# 파일 경로 및 디렉토리 처리를 위한 라이브러리
 import os
 
-CHECKERBOARD = (9,6)
+
+# 체크보드 내부 코너 개수 설정 (가로 9개, 세로 6개)
+CHECKERBOARD = (9, 6)
+
+# 체크보드 한 칸의 실제 크기 (mm 단위)
 square_size = 25.0
 
-criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,30,0.001)
+# 코너 위치를 서브픽셀 수준으로 정밀화할 때 사용할 종료 조건
+criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
-objp = np.zeros((CHECKERBOARD[0]*CHECKERBOARD[1],3),np.float32)
-objp[:,:2] = np.mgrid[0:CHECKERBOARD[0],0:CHECKERBOARD[1]].T.reshape(-1,2)
+
+# 체크보드 코너 개수만큼 3D 좌표 공간 생성 (초기값은 0)
+objp = np.zeros((CHECKERBOARD[0]*CHECKERBOARD[1], 3), np.float32)
+
+# 체스보드 격자 좌표 생성 (z=0 평면에 있다고 가정)
+objp[:, :2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
+
+# 실제 체스보드 한 칸 크기를 반영하여 좌표를 mm 단위로 변환
 objp *= square_size
 
+
+# 실제 세계 좌표(3D 좌표)를 저장할 리스트
 objpoints = []
+
+# 이미지에서 검출된 코너 좌표(2D 좌표)를 저장할 리스트
 imgpoints = []
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
-image_pattern = os.path.join(base_dir,"../calibration_images/left*.jpg")
 
+# 현재 실행 중인 Python 파일의 절대 경로를 얻고 디렉토리만 추출
+base_dir = os.path.dirname(os.path.abspath(__file__))
+
+# calibration_images 폴더 안의 left*.jpg 이미지 경로 패턴 생성
+image_pattern = os.path.join(base_dir, "../calibration_images/left*.jpg")
+
+# 패턴에 해당하는 모든 이미지를 찾고 정렬
 images = sorted(glob.glob(image_pattern))
 
+
+# 이미지 크기를 저장할 변수 (캘리브레이션 계산에 필요)
 img_size = None
 
+
+# -----------------------------
+# 1. 체크보드 코너 검출
+# -----------------------------
+
+# 모든 캘리브레이션 이미지를 순서대로 처리
 for fname in images:
 
+    # 이미지 파일을 읽어오기
     img = cv2.imread(fname)
-    gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
 
+    # 코너 검출 정확도를 높이기 위해 grayscale 이미지로 변환
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # 첫 번째 이미지에서 이미지 크기를 저장
     if img_size is None:
         img_size = gray.shape[::-1]
 
-    ret,corners = cv2.findChessboardCorners(gray,CHECKERBOARD,None)
+    # 이미지에서 체크보드 내부 코너 검출
+    ret, corners = cv2.findChessboardCorners(gray, CHECKERBOARD, None)
 
-    if ret:
+    # 코너 검출에 성공한 경우
+    if ret == True:
 
+        # 실제 세계 좌표(3D)를 리스트에 저장
         objpoints.append(objp)
-
-        corners2 = cv2.cornerSubPix(gray,corners,(11,11),(-1,-1),criteria)
-
+        
+        # 코너 위치를 서브픽셀 수준으로 정밀하게 보정
+        corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
+        
+        # 보정된 코너 좌표를 이미지 좌표 리스트에 저장
         imgpoints.append(corners2)
 
-        cv2.drawChessboardCorners(img,CHECKERBOARD,corners2,ret)
-        cv2.imshow("Corners",img)
+        # 검출된 코너를 이미지 위에 표시
+        cv2.drawChessboardCorners(img, CHECKERBOARD, corners2, ret)
+        
+        # 코너 검출 결과를 화면에 출력
+        cv2.imshow('Checking Corners', img)
+        
+        # 100ms 동안 화면에 표시
         cv2.waitKey(100)
 
+
+# 모든 OpenCV 창 닫기
 cv2.destroyAllWindows()
 
-ret,K,dist,rvecs,tvecs = cv2.calibrateCamera(objpoints,imgpoints,img_size,None,None)
 
+# -----------------------------
+# 2. 카메라 캘리브레이션
+# -----------------------------
+
+# 캘리브레이션 수행하여 카메라 내부 파라미터와 왜곡 계수 계산
+ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, img_size, None, None)
+
+
+# 카메라 내부 파라미터 행렬 출력
 print("Camera Matrix K:")
 print(K)
 
-print("Distortion Coefficients:")
+# 렌즈 왜곡 계수 출력
+print("\nDistortion Coefficients:")
 print(dist)
 
+
+# -----------------------------
+# 3. 왜곡 보정 시각화
+# -----------------------------
+
+# 캘리브레이션에 사용한 첫 번째 이미지를 불러오기
 sample_img = cv2.imread(images[0])
-dst = cv2.undistort(sample_img,K,dist)
 
-cv2.imshow("Original",sample_img)
-cv2.imshow("Undistorted",dst)
+# 계산된 카메라 행렬과 왜곡 계수를 이용하여 이미지 왜곡 보정
+dst = cv2.undistort(sample_img, K, dist, None, K)
 
+
+# 원본 이미지 출력
+cv2.imshow('Original Image', sample_img)
+
+# 왜곡 보정된 이미지 출력
+cv2.imshow('Undistorted Image', dst)
+
+
+# 키 입력이 있을 때까지 화면 유지
 cv2.waitKey(0)
+
+# 모든 OpenCV 창 종료
 cv2.destroyAllWindows()
 ```
 
@@ -123,53 +199,92 @@ cv2.undistort()
 ## 전체 코드
 
 ```python
+# OpenCV 라이브러리 (이미지 처리 및 기하 변환 기능 제공)
 import cv2
+
+# 수치 계산 및 배열 처리를 위한 NumPy 라이브러리
 import numpy as np
+
+# 파일 경로 처리를 위한 OS 라이브러리
 import os
 
-# 현재 실행 중인 파일의 디렉토리를 기준으로 경로 설정
-base_dir = os.path.dirname(os.path.abspath(__file__))
-image_path = os.path.join(base_dir, "../soccer.jpg")
 
-# 1. 이미지 로드
+# 현재 실행 중인 Python 파일의 절대 경로를 얻고 그 디렉토리를 추출
+base_dir = os.path.dirname(os.path.abspath(__file__))
+
+# 현재 디렉토리 기준 상위 폴더에 있는 soccer.jpg 파일 경로 생성
+image_path = os.path.join(base_dir, "../rose.png")
+
+
+# 지정한 경로에서 이미지를 읽어오기
 img = cv2.imread(image_path)
 
+# 이미지가 정상적으로 로드되지 않았을 경우 예외 처리
 if img is None:
     print(f"Error: Could not read image at {image_path}")
     exit()
 
-# 원본 이미지 크기
+
+# 이미지의 높이(h)와 너비(w) 추출
 h, w = img.shape[:2]
+
+# 이미지 중심 좌표 계산 (회전 기준점)
 center = (w // 2, h // 2)
+
 
 # -----------------------------
 # 2. 회전 및 크기 조절 (Rotation & Scaling)
 # -----------------------------
+
+# 회전 각도 설정 (30도)
 angle = 30
+
+# 이미지 크기 스케일 설정 (80% 크기)
 scale = 0.8
+
+# 중심 기준으로 회전 + 크기 조절을 위한 2x3 변환 행렬 생성
 M = cv2.getRotationMatrix2D(center, angle, scale)
+
 
 # -----------------------------
 # 3. 평행 이동 (Translation)
 # -----------------------------
+
+# x 방향 이동 거리 (오른쪽으로 80픽셀 이동)
 tx = 80
+
+# y 방향 이동 거리 (위쪽으로 40픽셀 이동)
 ty = -40
 
+# 변환 행렬의 x 방향 이동 성분에 tx 추가
 M[0, 2] += tx
+
+# 변환 행렬의 y 방향 이동 성분에 ty 추가
 M[1, 2] += ty
 
+
 # -----------------------------
-# 4. 아핀 변환 적용
+# 4. 아핀 변환 적용 (Affine Transformation)
 # -----------------------------
+
+# 변환 행렬 M을 이용해 이미지에 아핀 변환 적용
 dst = cv2.warpAffine(img, M, (w, h))
+
 
 # -----------------------------
 # 5. 결과 시각화
 # -----------------------------
+
+# 원본 이미지 출력
 cv2.imshow('Original Image', img)
+
+# 변환된 이미지 출력
 cv2.imshow('Transformed Image', dst)
 
+# 키 입력이 있을 때까지 창 유지
 cv2.waitKey(0)
+
+# OpenCV 창 모두 닫기
 cv2.destroyAllWindows()
 ```
 
@@ -235,15 +350,309 @@ dst = cv2.warpAffine(img, M, (w, h))
 ## 전체 코드
 
 ```python
-stereo = cv2.StereoBM_create(numDisparities=64,blockSize=15)
+# OpenCV 라이브러리 (스테레오 매칭, 이미지 처리, 시각화에 사용)
+import cv2
 
-disparity_int = stereo.compute(gray_left,gray_right)
-disparity = disparity_int.astype(np.float32)/16.0
+# 수치 연산 및 배열 계산을 위한 NumPy
+import numpy as np
 
-valid_mask = disparity>0
+# 파일 경로를 객체 형태로 다루기 위한 pathlib
+from pathlib import Path
 
+
+# 결과 이미지를 저장할 outputs 폴더 생성
+output_dir = Path("./outputs")
+
+# 폴더가 없으면 생성 (parents=True: 상위 폴더까지 생성)
+output_dir.mkdir(parents=True, exist_ok=True)
+
+
+# OS 관련 경로 처리를 위한 라이브러리
+import os
+
+
+# 현재 실행 중인 Python 파일의 디렉토리 경로 가져오기
+base_dir = Path(__file__).parent.resolve()
+
+# 좌측 이미지 불러오기
+left_color = cv2.imread(str(base_dir / "../left.png"))
+
+# 우측 이미지 불러오기
+right_color = cv2.imread(str(base_dir / "../right.png"))
+
+
+# 이미지가 정상적으로 로드되지 않았을 경우 예외 처리
+if left_color is None or right_color is None:
+    raise FileNotFoundError("좌/우 이미지를 찾지 못했습니다.")
+
+
+# 카메라 초점 거리 (focal length)
+f = 700.0
+
+# 두 카메라 사이 거리 (baseline)
+B = 0.12
+
+
+# 거리 측정을 수행할 관심 영역(ROI) 설정
+rois = {
+    "Painting": (55, 50, 130, 110),
+    "Frog": (90, 265, 230, 95),
+    "Teddy": (310, 35, 115, 90)
+}
+
+
+# 스테레오 매칭을 위해 좌/우 이미지를 grayscale로 변환
+gray_left = cv2.cvtColor(left_color, cv2.COLOR_BGR2GRAY)
+
+# 오른쪽 이미지 grayscale 변환
+gray_right = cv2.cvtColor(right_color, cv2.COLOR_BGR2GRAY)
+
+
+# -----------------------------
+# 1. Disparity 계산
+# -----------------------------
+
+# StereoBM 알고리즘 생성 (numDisparities: 탐색 범위, blockSize: 블록 크기)
+stereo = cv2.StereoBM_create(numDisparities=64, blockSize=15)
+
+# 좌/우 이미지의 disparity 계산
+disparity_int = stereo.compute(gray_left, gray_right)
+
+# disparity 값을 float32로 변환하고 16으로 나누어 실제 값으로 복원
+disparity = disparity_int.astype(np.float32) / 16.0
+
+
+# -----------------------------
+# 2. Depth 계산
+# Z = fB / d
+# -----------------------------
+
+# disparity가 0보다 큰 픽셀만 유효한 데이터로 판단
+valid_mask = disparity > 0
+
+# depth map 초기화
 depth_map = np.zeros_like(disparity)
-depth_map[valid_mask] = (f*B)/disparity[valid_mask]
+
+# 깊이 계산 공식 적용 (Z = fB / d)
+depth_map[valid_mask] = (f * B) / disparity[valid_mask]
+
+
+# -----------------------------
+# 3. ROI별 평균 disparity / depth 계산
+# -----------------------------
+
+# 결과 저장용 딕셔너리
+results = {}
+
+# 각 ROI에 대해 반복 수행
+for name, (x, y, w, h) in rois.items():
+
+    # ROI 영역의 disparity 추출
+    roi_disp = disparity[y:y+h, x:x+w]
+
+    # ROI 영역의 depth 추출
+    roi_depth = depth_map[y:y+h, x:x+w]
+
+    # ROI 영역에서 유효한 disparity 위치 추출
+    roi_valid = valid_mask[y:y+h, x:x+w]
+    
+    # 유효한 픽셀이 존재하는 경우 평균 계산
+    if np.any(roi_valid):
+        avg_disp = np.mean(roi_disp[roi_valid])
+        avg_depth = np.mean(roi_depth[roi_valid])
+
+    # 유효 픽셀이 없는 경우 0으로 설정
+    else:
+        avg_disp = 0
+        avg_depth = 0
+    
+    # 결과 딕셔너리에 저장
+    results[name] = {"avg_disp": avg_disp, "avg_depth": avg_depth}
+
+
+# -----------------------------
+# 4. 결과 출력
+# -----------------------------
+
+# 표 형태로 결과 출력
+print(f"{'ROI':<10} | {'Avg Disparity':<15} | {'Avg Depth':<10}")
+print("-" * 40)
+
+# 각 ROI 결과 출력
+for name, data in results.items():
+    print(f"{name:<10} | {data['avg_disp']:<15.4f} | {data['avg_depth']:<10.4f}")
+
+
+# depth 값이 가장 작은 객체 (가장 가까운 객체)
+closest_roi = min(results.items(), key=lambda item: item[1]['avg_depth'])
+
+# depth 값이 가장 큰 객체 (가장 먼 객체)
+farthest_roi = max(results.items(), key=lambda item: item[1]['avg_depth'])
+
+
+# 가장 가까운 객체 출력
+print(f"\n가장 가까운 객체: {closest_roi[0]} (Avg Depth: {closest_roi[1]['avg_depth']:.4f})")
+
+# 가장 먼 객체 출력
+print(f"가장 먼 객체: {farthest_roi[0]} (Avg Depth: {farthest_roi[1]['avg_depth']:.4f}")
+
+
+# -----------------------------
+# 5. disparity 시각화
+# 가까울수록 빨강 / 멀수록 파랑
+# -----------------------------
+
+# disparity 복사
+disp_tmp = disparity.copy()
+
+# disparity가 0 이하인 값은 NaN 처리
+disp_tmp[disp_tmp <= 0] = np.nan
+
+
+# 모든 값이 NaN이면 오류 발생
+if np.all(np.isnan(disp_tmp)):
+    raise ValueError("유효한 disparity 값이 없습니다.")
+
+
+# disparity 값의 하위 5% 값
+d_min = np.nanpercentile(disp_tmp, 5)
+
+# disparity 값의 상위 95% 값
+d_max = np.nanpercentile(disp_tmp, 95)
+
+
+# 값이 동일할 경우 대비
+if d_max <= d_min:
+    d_max = d_min + 1e-6
+
+
+# disparity 값을 0~1 범위로 정규화
+disp_scaled = (disp_tmp - d_min) / (d_max - d_min)
+
+# 범위 제한
+disp_scaled = np.clip(disp_scaled, 0, 1)
+
+
+# 시각화용 disparity 이미지 생성
+disp_vis = np.zeros_like(disparity, dtype=np.uint8)
+
+# 유효 disparity 위치
+valid_disp = ~np.isnan(disp_tmp)
+
+# 0~255 범위로 변환
+disp_vis[valid_disp] = (disp_scaled[valid_disp] * 255).astype(np.uint8)
+
+
+# 컬러맵 적용 (JET: 가까울수록 빨강)
+disparity_color = cv2.applyColorMap(disp_vis, cv2.COLORMAP_JET)
+
+
+# -----------------------------
+# 6. depth 시각화
+# 가까울수록 빨강 / 멀수록 파랑
+# -----------------------------
+
+# depth 시각화용 이미지 생성
+depth_vis = np.zeros_like(depth_map, dtype=np.uint8)
+
+
+# 유효 depth 값이 존재하는 경우
+if np.any(valid_mask):
+
+    # 유효 depth 값 추출
+    depth_valid = depth_map[valid_mask]
+
+    # depth 하위 5%
+    z_min = np.percentile(depth_valid, 5)
+
+    # depth 상위 95%
+    z_max = np.percentile(depth_valid, 95)
+
+
+    # 값이 동일할 경우 대비
+    if z_max <= z_min:
+        z_max = z_min + 1e-6
+
+
+    # depth 값을 0~1 범위로 정규화
+    depth_scaled = (depth_map - z_min) / (z_max - z_min)
+
+    # 범위 제한
+    depth_scaled = np.clip(depth_scaled, 0, 1)
+
+    # depth는 클수록 멀기 때문에 색상 반전
+    depth_scaled = 1.0 - depth_scaled
+
+    # 0~255로 변환
+    depth_vis[valid_mask] = (depth_scaled[valid_mask] * 255).astype(np.uint8)
+
+
+# 컬러맵 적용
+depth_color = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
+
+
+# -----------------------------
+# 7. Left / Right 이미지에 ROI 표시
+# -----------------------------
+
+# 왼쪽 이미지 복사
+left_vis = left_color.copy()
+
+# 오른쪽 이미지 복사
+right_vis = right_color.copy()
+
+
+# 각 ROI 영역을 이미지에 표시
+for name, (x, y, w, h) in rois.items():
+
+    # 왼쪽 이미지에 ROI 사각형 표시
+    cv2.rectangle(left_vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+    # ROI 이름 표시
+    cv2.putText(left_vis, name, (x, y - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+    # 오른쪽 이미지에 ROI 표시
+    cv2.rectangle(right_vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+    # ROI 이름 표시
+    cv2.putText(right_vis, name, (x, y - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+
+# -----------------------------
+# 8. 저장
+# -----------------------------
+
+# disparity 시각화 이미지 저장
+cv2.imwrite(str(output_dir / "disparity_map.png"), disparity_color)
+
+# depth 시각화 이미지 저장
+cv2.imwrite(str(output_dir / "depth_map.png"), depth_color)
+
+# ROI가 표시된 왼쪽 이미지 저장
+cv2.imwrite(str(output_dir / "left_roi.png"), left_vis)
+
+
+# -----------------------------
+# 9. 출력
+# -----------------------------
+
+# ROI가 표시된 원본 이미지 출력
+cv2.imshow("Original Left (with ROIs)", left_vis)
+
+# disparity 시각화 출력
+cv2.imshow("Disparity Map", disparity_color)
+
+# depth 시각화 출력
+cv2.imshow("Depth Map", depth_color)
+
+
+# 키 입력 대기
+cv2.waitKey(0)
+
+# 모든 OpenCV 창 닫기
+cv2.destroyAllWindows()
 ```
 
 ---
