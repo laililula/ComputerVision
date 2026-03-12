@@ -151,46 +151,158 @@ cv2.destroyAllWindows()
 
 ## 주요 코드 설명
 
-### 1. 체스보드 코너 검출
+### 1. 체스보드 패턴 설정
 
 ```python
-cv2.findChessboardCorners()
+CHECKERBOARD = (9, 6)
+square_size = 25.0
 ```
 
-체스보드 패턴을 이용하여 **이미지에서 코너 좌표를 검출**합니다.
+카메라 캘리브레이션에서는 **체스보드 패턴 이미지**를 사용하여  
+카메라의 내부 파라미터를 계산합니다.
+
+- `CHECKERBOARD = (9,6)`
+  - 체스보드 **내부 코너 개수**를 의미합니다.
+  - 가로 9개, 세로 6개의 코너를 검출합니다.
+
+주의할 점
+
+- 체스보드 **칸 개수가 아니라 코너 개수**입니다.
+
+예시
+
+```
+체스보드 칸: 10 × 7
+내부 코너: 9 × 6
+```
+
+`square_size`는 체스보드 한 칸의 실제 크기입니다.
+
+이 값은 **실제 거리 계산 스케일을 결정하는 중요한 파라미터**입니다.
 
 ---
 
-### 2. 서브픽셀 정밀화
+### 2. 3D World 좌표 생성
 
 ```python
-cv2.cornerSubPix()
+objp = np.zeros((CHECKERBOARD[0]*CHECKERBOARD[1],3),np.float32)
+objp[:,:2] = np.mgrid[0:CHECKERBOARD[0],0:CHECKERBOARD[1]].T.reshape(-1,2)
+objp *= square_size
 ```
 
-검출된 코너 좌표를 **더 정밀한 위치로 보정**합니다.
+캘리브레이션을 위해 **체스보드 코너의 실제 세계 좌표**를 생성합니다.
+
+좌표 구조
+
+```
+(X, Y, Z)
+```
+
+하지만 체스보드는 평면이기 때문에
+
+```
+Z = 0
+```
+
+으로 설정됩니다.
+
+예시
+
+```
+(0,0,0)
+(1,0,0)
+(2,0,0)
+...
+```
+
+이 좌표에 `square_size`를 곱하여 **실제 물리적 크기(mm)** 를 반영합니다.
 
 ---
 
-### 3. 카메라 캘리브레이션
+### 3. 체스보드 코너 검출
 
 ```python
-cv2.calibrateCamera()
+ret, corners = cv2.findChessboardCorners(gray,CHECKERBOARD,None)
 ```
 
-다음 파라미터를 계산합니다.
+OpenCV의 `findChessboardCorners()` 함수는
 
-- 카메라 내부 파라미터 (Camera Matrix)
-- 렌즈 왜곡 계수
+- 체스보드 패턴을 탐지하고
+- 내부 코너 위치를 검출합니다.
+
+반환값
+
+- `ret` : 검출 성공 여부
+- `corners` : 검출된 코너 좌표
+
+성공한 이미지에서만 캘리브레이션에 사용됩니다.
 
 ---
 
-### 4. 왜곡 보정
+### 4. 코너 정밀화 (Subpixel Refinement)
 
 ```python
-cv2.undistort()
+corners2 = cv2.cornerSubPix(gray,corners,(11,11),(-1,-1),criteria)
 ```
 
-캘리브레이션 결과를 이용하여 **렌즈 왜곡을 제거**합니다.
+체스보드 코너 위치를 **서브픽셀 수준으로 보정**합니다.
+
+이 과정이 필요한 이유
+
+- `findChessboardCorners()` 결과는 **픽셀 단위 정확도**
+- `cornerSubPix()`는 **서브픽셀 정확도**
+
+즉 **더 정확한 캘리브레이션 결과를 얻을 수 있습니다.**
+
+---
+
+### 5. 카메라 캘리브레이션 수행
+
+```python
+ret,K,dist,rvecs,tvecs = cv2.calibrateCamera(
+    objpoints,imgpoints,img_size,None,None
+)
+```
+
+OpenCV의 `calibrateCamera()` 함수는  
+체스보드 이미지들을 이용하여 **카메라 파라미터를 계산합니다.**
+
+입력
+
+- `objpoints` : 실제 3D 좌표
+- `imgpoints` : 이미지에서 검출된 2D 좌표
+
+출력
+
+- `K` : 카메라 내부 파라미터 행렬
+- `dist` : 렌즈 왜곡 계수
+
+카메라 행렬 구조
+
+```
+[ fx  0  cx ]
+[ 0  fy  cy ]
+[ 0   0   1 ]
+```
+
+- `fx, fy` : 초점 거리
+- `cx, cy` : 이미지 중심
+
+---
+
+### 6. 렌즈 왜곡 보정
+
+```python
+dst = cv2.undistort(sample_img,K,dist)
+```
+
+카메라 렌즈는 일반적으로 다음과 같은 왜곡이 발생합니다.
+
+- Barrel distortion
+- Pincushion distortion
+
+`cv2.undistort()`는 캘리브레이션 결과를 이용하여  
+**이미지 왜곡을 제거합니다.**
 
 ---
 
@@ -296,52 +408,162 @@ cv2.destroyAllWindows()
 img = cv2.imread(image_path)
 ```
 
-OpenCV의 `cv2.imread()` 함수를 사용하여 이미지를 읽어옵니다.
+OpenCV의 `cv2.imread()` 함수를 이용하여 이미지를 읽어옵니다.
 
 - 이미지는 **NumPy 배열 형태**로 저장됩니다.
-- OpenCV는 기본적으로 **BGR 색상 순서**를 사용합니다.
-- 파일이 존재하지 않으면 `None`을 반환합니다.
+- OpenCV는 기본적으로 **BGR 색상 순서**를 사용합니다.  
+  (일반적인 RGB와 다르기 때문에 주의해야 합니다.)
+- 파일 경로가 잘못되었거나 이미지가 존재하지 않으면 `None`을 반환합니다.
+
+따라서 다음과 같이 예외 처리를 통해 **이미지 로드 실패 상황을 방지합니다.**
+
+```python
+if img is None:
+    exit()
+```
 
 ---
 
-### 2. 회전 변환
+### 2. 이미지 크기와 중심 좌표 계산
+
+```python
+h, w = img.shape[:2]
+center = (w // 2, h // 2)
+```
+
+이미지의 높이와 너비를 가져와 **중심 좌표를 계산합니다.**
+
+- `img.shape` → `(height, width, channels)`
+- `shape[:2]` → 높이와 너비만 추출
+
+이미지 중심 좌표는 **회전 변환의 기준점**으로 사용됩니다.
+
+---
+
+### 3. 회전 및 스케일 변환 행렬 생성
 
 ```python
 M = cv2.getRotationMatrix2D(center, angle, scale)
 ```
 
-이미지를
+OpenCV의 `getRotationMatrix2D()` 함수는  
+이미지 회전을 위한 **2×3 변환 행렬**을 생성합니다.
 
-- 중심 기준 **30도 회전**
-- **0.8배 크기로 축소**
+매개변수
 
-하는 변환 행렬을 생성합니다.
+- `center` : 회전 기준점
+- `angle` : 회전 각도 (도 단위)
+- `scale` : 확대 또는 축소 비율
+
+예시
+
+```
+angle = 30
+scale = 0.8
+```
+
+→ 이미지를 **30도 회전하고 0.8배 축소**합니다.
 
 ---
 
-### 3. 평행 이동
+### 4. 평행 이동 적용
 
 ```python
 M[0,2] += tx
 M[1,2] += ty
 ```
 
-이미지를
+회전 행렬의 마지막 열은 **평행 이동(translation)** 값을 의미합니다.
 
-- x 방향 **+80px**
-- y 방향 **−40px**
+```
+[ a  b  tx ]
+[ c  d  ty ]
+```
 
-만큼 이동합니다.
+여기서
+
+- `tx` : x 방향 이동량
+- `ty` : y 방향 이동량
+
+예시
+
+```
+tx = 80
+ty = -40
+```
+
+→ 이미지가 **오른쪽 80px, 위쪽 40px 이동**합니다.
 
 ---
 
-### 4. 아핀 변환 적용
+### 5. 아핀 변환 적용
 
 ```python
 dst = cv2.warpAffine(img, M, (w, h))
 ```
 
-회전, 스케일, 평행 이동이 결합된 **아핀 변환**을 이미지에 적용합니다.
+OpenCV의 `warpAffine()` 함수는  
+**아핀 변환(Affine Transformation)** 을 이미지에 적용합니다.
+
+아핀 변환에는 다음 변환이 포함됩니다.
+
+- 회전 (Rotation)
+- 크기 조절 (Scaling)
+- 평행 이동 (Translation)
+- 기울기 변환 (Shear)
+
+매개변수
+
+- `img` : 원본 이미지
+- `M` : 변환 행렬
+- `(w, h)` : 출력 이미지 크기
+
+---
+
+### 6. 결과 이미지 출력
+
+```python
+cv2.imshow('Original Image', img)
+cv2.imshow('Transformed Image', dst)
+```
+
+OpenCV 창을 생성하여 이미지를 출력합니다.
+
+- 첫 번째 창 : 원본 이미지
+- 두 번째 창 : 변환된 이미지
+
+이렇게 하면 **변환 전후를 쉽게 비교할 수 있습니다.**
+
+---
+
+### 7. 키 입력 대기
+
+```python
+cv2.waitKey(0)
+```
+
+OpenCV 창이 바로 닫히지 않도록  
+**사용자의 키 입력을 기다립니다.**
+
+- `0` → 무한 대기
+- 키 입력이 발생하면 다음 코드 실행
+
+---
+
+### 8. OpenCV 창 종료
+
+```python
+cv2.destroyAllWindows()
+```
+
+프로그램 종료 시 **열려 있는 모든 OpenCV 창을 닫습니다.**
+
+이 과정이 없으면
+
+- 프로그램 종료 후에도
+- OpenCV 창이 남아 있을 수 있습니다.
+
+따라서 **이미지 출력 프로그램에서는 필수적으로 사용되는 함수입니다.**
 
 ---
 
@@ -659,61 +881,181 @@ cv2.destroyAllWindows()
 
 ## 주요 코드 설명
 
-### 1. Disparity 계산
+### 1. StereoBM 객체 생성
 
 ```python
-stereo.compute()
+stereo = cv2.StereoBM_create(numDisparities=64, blockSize=15)
 ```
 
-좌우 이미지의 **픽셀 이동량(disparity)** 을 계산합니다.
+StereoBM(Stereo Block Matching)은  
+좌우 이미지의 **disparity(시차)** 를 계산하는 알고리즘입니다.
 
-- disparity가 클수록 **물체가 가까움**
-- disparity가 작을수록 **물체가 멀리 있음**
+주요 파라미터
+
+- `numDisparities`
+  - 탐색할 disparity 범위
+  - **16의 배수**여야 합니다.
+
+- `blockSize`
+  - 매칭에 사용하는 블록 크기
+  - 클수록 노이즈 감소
+  - 작을수록 디테일 증가
 
 ---
 
-### 2. Depth 계산
+### 2. Disparity 계산
 
-Depth는 다음 공식을 사용하여 계산합니다.
+```python
+disparity_int = stereo.compute(gray_left, gray_right)
+```
+
+좌우 이미지의 픽셀 위치 차이를 계산합니다.
+
+이 값이 바로 **disparity** 입니다.
+
+disparity 의미
+
+```
+왼쪽 이미지 픽셀 위치
+-
+오른쪽 이미지 픽셀 위치
+```
+
+특징
+
+- disparity가 클수록 **가까운 물체**
+- disparity가 작을수록 **먼 물체**
+
+---
+
+### 3. Disparity 정규화
+
+```python
+disparity = disparity_int.astype(np.float32) / 16.0
+```
+
+StereoBM은 disparity 값을
+
+```
+16배 스케일된 정수
+```
+
+형태로 반환합니다.
+
+따라서 실제 disparity 값을 얻기 위해  
+**16으로 나누어야 합니다.**
+
+---
+
+### 4. Depth 계산
+
+```python
+depth_map[valid_mask] = (f * B) / disparity[valid_mask]
+```
+
+Depth는 다음 공식을 이용하여 계산됩니다.
 
 \[
 Z = \frac{fB}{d}
 \]
 
-- **f** : 초점 거리
-- **B** : 두 카메라 사이 거리
-- **d** : disparity
+여기서
+
+- `Z` : Depth (거리)
+- `f` : 카메라 초점 거리
+- `B` : 카메라 baseline
+- `d` : disparity
+
+특징
+
+- disparity ↑ → depth ↓ → 가까움
+- disparity ↓ → depth ↑ → 멀어짐
 
 ---
 
-### 3. ROI 거리 계산
+### 5. ROI 영역 평균 거리 계산
 
-각 ROI 영역에 대해
+```python
+roi_disp = disparity[y:y+h, x:x+w]
+roi_depth = depth_map[y:y+h, x:x+w]
+```
 
-- 평균 disparity
-- 평균 depth
+NumPy 슬라이싱을 이용하여  
+**ROI 영역의 disparity와 depth 값을 추출**합니다.
+
+이후
+
+```
+평균 disparity
+평균 depth
+```
 
 를 계산하여 **객체 간 거리 비교**를 수행합니다.
 
 ---
 
-### 4. Disparity 시각화
+### 6. Disparity 시각화
 
 ```python
-cv2.applyColorMap()
+disparity_color = cv2.applyColorMap(disp_vis, cv2.COLORMAP_JET)
 ```
 
-Disparity 값을 컬러맵으로 변환합니다.
+Disparity 값을 컬러맵으로 변환하여  
+거리 정보를 **시각적으로 표현**합니다.
 
 색상 의미
 
-- **빨강 → 가까움**
-- **파랑 → 멀리 있음**
+```
+빨강 → 가까움
+파랑 → 멀리 있음
+```
 
 ---
 
-### 5. Depth Map 생성
+### 7. Depth Map 시각화
 
-Depth 값을 정규화하여 컬러맵을 적용하면 **거리 정보를 시각적으로 확인**할 수 있습니다.
+Depth 값도 동일하게 정규화 후 컬러맵을 적용하여  
+**거리 정보를 색상으로 표현**합니다.
+
+단, depth는 값이 클수록 멀기 때문에
+
+```
+depth_scaled = 1 - depth_scaled
+```
+
+과 같이 **색상을 반전**합니다.
+
+---
+
+### 8. ROI 시각화
+
+```python
+cv2.rectangle()
+cv2.putText()
+```
+
+ROI 영역을 이미지에 표시하여  
+**어떤 객체의 거리를 계산했는지 시각적으로 확인할 수 있습니다.**
+
+표시 정보
+
+- ROI 위치
+- 객체 이름
+
+---
+
+### 9. 결과 저장
+
+```python
+cv2.imwrite()
+```
+
+다음 이미지를 파일로 저장합니다.
+
+- disparity_map.png
+- depth_map.png
+- left_roi.png
+
+이를 통해 **분석 결과를 이미지 파일로 확인할 수 있습니다.**
 
 ---
