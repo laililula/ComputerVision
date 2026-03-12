@@ -2,8 +2,6 @@
 
 이 README 파일은 week02 폴더의 practice04.py, practice05.py, practice06.py 파일들의 전체 코드, 주요 코드 설명, 그리고 실행 결과를 포함합니다.
 
----
-
 # Practice 04: 체크보드 기반 카메라 캘리브레이션
 
 ## 전체 코드
