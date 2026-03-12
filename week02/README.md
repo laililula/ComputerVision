@@ -306,6 +306,13 @@ dst = cv2.undistort(sample_img,K,dist)
 
 ---
 
+### 실행 결과
+<img width="1260" height="1004" alt="image" src="https://github.com/user-attachments/assets/3ce9ad06-b9ee-4327-a923-c2bc00bcc65b" />
+
+<img width="1267" height="996" alt="image" src="https://github.com/user-attachments/assets/c4ea68bd-9311-4506-b8c3-67e06f5f11fe" />
+
+<img width="962" height="249" alt="image" src="https://github.com/user-attachments/assets/8b8b734b-4fa9-4439-b32f-7f9533f3cfa7" />
+
 # Practice 05: 이미지 Rotation & Transformation
 
 ## 전체 코드
@@ -566,6 +573,11 @@ cv2.destroyAllWindows()
 따라서 **이미지 출력 프로그램에서는 필수적으로 사용되는 함수입니다.**
 
 ---
+
+### 실행 결과
+<img width="2348" height="1585" alt="image" src="https://github.com/user-attachments/assets/864665c6-ab06-440c-9aca-0bd235e12b9a" />
+
+<img width="2360" height="1600" alt="image" src="https://github.com/user-attachments/assets/92e5ee7b-22df-4b0a-a915-a8d16ba4f7c1" />
 
 # Practice 06: Stereo Disparity 기반 Depth 추정
 
@@ -1059,3 +1071,12 @@ cv2.imwrite()
 이를 통해 **분석 결과를 이미지 파일로 확인할 수 있습니다.**
 
 ---
+
+### 실행 결과
+<img width="886" height="788" alt="image" src="https://github.com/user-attachments/assets/d3242771-c8f7-4986-8b7c-b98615b1fe8e" />
+
+<img width="876" height="786" alt="image" src="https://github.com/user-attachments/assets/e0155513-a1bf-472e-bf62-2bb3fca2f09f" />
+
+<img width="888" height="789" alt="image" src="https://github.com/user-attachments/assets/73824d10-e386-4adc-aadd-00fc95fc9d61" />
+
+<img width="642" height="277" alt="image" src="https://github.com/user-attachments/assets/fc79b8af-c507-4422-811c-a943511f2c0b" />
