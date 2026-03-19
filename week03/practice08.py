@@ -96,7 +96,7 @@ plt.axis('off')
 plt.tight_layout()
 
 # 최종 결과 화면을 PNG 파일로 저장합니다.
-plt.savefig('과제2_결과.png', dpi=300, bbox_inches='tight')
+plt.savefig('week03과제2_결과.png', dpi=300, bbox_inches='tight')
 
 # figure를 닫아 메모리를 정리합니다.
 plt.close()
