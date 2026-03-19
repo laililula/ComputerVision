@@ -158,8 +158,7 @@ plt.imshow(magnitude, cmap='gray')
 원본 이미지와 에지 강도 영상을 나란히 배치하여 비교합니다.
 
 ## 실행 결과
-
-
+<img width="2143" height="661" alt="image" src="https://github.com/user-attachments/assets/c7eb6db2-43b5-4906-9ba0-3524155d8d5f" />
 
 ---
 
@@ -329,7 +328,7 @@ plt.imshow(img_line_rgb)
 원본 이미지와 직선이 그려진 결과 이미지를 나란히 배치하여 비교합니다.
 
 ## 실행 결과
-
+<img width="2137" height="856" alt="image" src="https://github.com/user-attachments/assets/b3e3ccc2-794c-4911-98b3-51a07957c1ea" />
 
 
 ---
@@ -527,3 +526,4 @@ plt.imshow(img_extracted_rgb)
 원본 이미지, 마스크 이미지, 객체 추출 결과를 한 화면에 나란히 배치하여 비교합니다.
 
 ## 실행 결과
+<img width="2139" height="577" alt="image" src="https://github.com/user-attachments/assets/f6b5f900-4505-42d7-a93c-99885fa758d1" />
