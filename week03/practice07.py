@@ -87,6 +87,7 @@ plt.tight_layout()
 
 # 현재 결과 화면을 PNG 파일로 저장합니다.
 plt.savefig('week03과제1_결과.png', dpi=300, bbox_inches='tight')
+plt.show()
 
 # 사용한 figure 자원을 정리하고 창을 닫습니다.
 plt.close()
