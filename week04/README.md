@@ -466,5 +466,5 @@ RANSAC에서 inlier로 판정된 매칭점만 녹색 선으로 표시합니다.
 
 ## 실행 결과
 
-<img width="2864" height="1561" alt="image" src="https://github.com/user-attachments/assets/adc765c4-98e0-45f6-8efd-3ee6db320000" />
+<img width="2859" height="1304" alt="image" src="https://github.com/user-attachments/assets/80b8c5a2-de8c-46e7-99b3-927f5b01b6b3" />
 
