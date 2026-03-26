@@ -132,7 +132,7 @@ img_with_keypoints = cv.drawKeypoints(
 
 ## 실행 결과
 
-[실행 결과 이미지를 여기에 배치]
+<img width="2377" height="1312" alt="image" src="https://github.com/user-attachments/assets/5818af76-ec8e-4d69-9316-48ea5f800aea" />
 
 ---
 
@@ -296,7 +296,7 @@ matched_img = cv.drawMatches(
 
 ## 실행 결과
 
-[실행 결과 이미지를 여기에 배치]
+<img width="2861" height="1564" alt="image" src="https://github.com/user-attachments/assets/c3243b06-6fa1-4fd3-9c51-4ad44873a31b" />
 
 ---
 
@@ -553,5 +553,5 @@ RANSAC에서 inlier로 판정된 매칭점만 녹색 선으로 표시합니다.
 
 ## 실행 결과
 
-[실행 결과 이미지를 여기에 배치]
+<img width="2864" height="1561" alt="image" src="https://github.com/user-attachments/assets/adc765c4-98e0-45f6-8efd-3ee6db320000" />
 
