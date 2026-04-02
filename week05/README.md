@@ -423,6 +423,10 @@ Trainable params: 109,898
 - 분류 실패한 숫자들이 빨간색으로 표시됩니다.
 - 대부분의 이미지가 정확하게 분류됩니다.
 
+<img width="2379" height="902" alt="image" src="https://github.com/user-attachments/assets/1ce948ad-b3d9-4ef0-b1aa-f0ff8e25b4e0" />
+<img width="2869" height="719" alt="image" src="https://github.com/user-attachments/assets/a941e89d-c8b5-4987-b742-123d57f41435" />
+
+
 ---
 
 # Practice 14: CIFAR-10 데이터셋을 활용한 CNN 모델 구축
@@ -1007,3 +1011,8 @@ Trainable params: 1,132,610
 - 모델이 개로 올바르게 분류할 확률이 높으면 'dog' 클래스로 예측됩니다.
 - 예측 확률분포를 통해 각 클래스별 신뢰도를 확인할 수 있습니다.
 - 예: `dog (confidence: 89.5%), cat (confidence: 5.2%), ...`
+
+<img width="2387" height="910" alt="image" src="https://github.com/user-attachments/assets/83a8c85b-c631-42b0-91e8-369bb74062ed" />
+<img width="2863" height="701" alt="image" src="https://github.com/user-attachments/assets/3d8ac541-ab9c-4811-b7c2-38baa088873b" />
+
+
