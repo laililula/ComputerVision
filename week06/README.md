@@ -14,287 +14,419 @@ SORT 알고리즘은 간단하면서도 효과적인 추적 기법으로, IoU(In
 ## 전체 코드
 
 ```python
+# OpenCV: 영상 읽기, DNN 객체 검출, 화면 출력에 사용
 import cv2
+
+# NumPy: 배열 처리, IoU 행렬 생성, 검출 결과 저장에 사용
 import numpy as np
+
+# Hungarian Algorithm: tracker와 detection을 최적으로 매칭하는 데 사용
 from scipy.optimize import linear_sum_assignment
 
-# ==========================================
-# 1. IoU 계산 함수
-# ==========================================
 
+# =========================
+# 1. IoU 계산 함수
+# =========================
+
+# 두 개의 바운딩 박스(bb_test, bb_gt)가 얼마나 겹치는지를
+# IoU(Intersection over Union) 값으로 계산하는 함수
 def iou(bb_test, bb_gt):
-    """
-    두 바운딩 박스 간의 IoU(Intersection over Union) 계산.
-    bb_test, bb_gt: [x1, y1, x2, y2] 형식의 박스 좌표
-    반환: 0 ~ 1 사이의 IoU 값
-    """
+    # 두 박스가 겹치는 영역의 좌상단 x, y
     xx1 = max(bb_test[0], bb_gt[0])
     yy1 = max(bb_test[1], bb_gt[1])
+
+    # 두 박스가 겹치는 영역의 우하단 x, y
     xx2 = min(bb_test[2], bb_gt[2])
     yy2 = min(bb_test[3], bb_gt[3])
-    
+
+    # 겹치는 영역의 너비와 높이
     w = max(0., xx2 - xx1)
     h = max(0., yy2 - yy1)
-    
+
+    # 교집합 면적
     inter = w * h
-    
+
+    # 첫 번째 박스의 면적
     area1 = (bb_test[2] - bb_test[0]) * (bb_test[3] - bb_test[1])
+
+    # 두 번째 박스의 면적
     area2 = (bb_gt[2] - bb_gt[0]) * (bb_gt[3] - bb_gt[1])
+
+    # 합집합 면적
     union = area1 + area2 - inter
-    
+
+    # 합집합이 0 이하이면 나눗셈 오류 방지를 위해 0 반환
     if union <= 0:
         return 0.0
-    
+
+    # IoU = 교집합 / 합집합
     return inter / union
 
 
-# ==========================================
-# 2. Track 클래스 - 개별 객체 관리
-# ==========================================
+# =========================
+# 2. 간단한 SORT용 Track 클래스
+# =========================
 
+# 하나의 추적 객체(트랙)를 표현하는 클래스
+# bbox: 현재 객체의 바운딩 박스
+# id: 객체 고유 번호
+# hits: 지금까지 성공적으로 매칭된 횟수
+# no_losses: 최근 몇 프레임 동안 검출과 매칭되지 않았는지
 class Track:
-    """개별 추적 객체를 관리하는 클래스"""
-    
     def __init__(self, bbox, track_id):
-        """
-        bbox: [x1, y1, x2, y2] 형식의 초기 바운딩 박스
-        track_id: 이 객체의 고유 ID
-        """
-        self.bbox = bbox           # 현재 박스 좌표
-        self.id = track_id         # 객체의 고유 ID (변하지 않음)
-        self.hits = 1              # 성공적으로 detection과 매칭된 횟수
-        self.no_losses = 0         # 연속으로 매칭되지 않은 프레임 수
-    
+        # 현재 객체의 위치 정보 [x1, y1, x2, y2]
+        self.bbox = bbox
+
+        # 이 객체의 고유 ID
+        self.id = track_id
+
+        # 첫 생성 시 매칭 횟수는 1
+        self.hits = 1
+
+        # 아직 잃어버린 적 없으므로 0
+        self.no_losses = 0
+
+    # 기존 track이 새 detection과 매칭되었을 때 정보 갱신
     def update(self, bbox):
-        """새로운 detection과 매칭되었을 때 호출"""
-        self.bbox = bbox           # 박스 위치 업데이트
-        self.hits += 1             # 성공 카운트 증가
-        self.no_losses = 0         # 손실 카운트 리셋
+        # 바운딩 박스를 새 위치로 갱신
+        self.bbox = bbox
+
+        # 성공적으로 다시 매칭되었으므로 hits 증가
+        self.hits += 1
+
+        # 놓친 프레임 수 초기화
+        self.no_losses = 0
 
 
-# ==========================================
-# 3. SimpleSORT 클래스 - SORT 알고리즘 구현
-# ==========================================
+# =========================
+# 3. 간단한 SORT 클래스
+# =========================
 
+# SORT의 핵심 아이디어를 단순화한 추적기 클래스
+# 원본 SORT처럼 Kalman Filter는 사용하지 않고,
+# IoU 기반 매칭과 생존 시간 관리만으로 구현
 class SimpleSORT:
-    """간단하지만 효과적인 SORT 알고리즘 구현"""
-    
-    def __init__(self, max_age=30, min_hits=3, iou_threshold=0.3):
-        """
-        max_age: 최대 몇 프레임까지 detection 없이 track 유지할지
-        min_hits: 화면에 표시하기 위한 최소 매칭 횟수
-        iou_threshold: 유효한 매칭으로 간주할 최소 IoU 값
-        """
+    def __init__(self, max_age=10, min_hits=3, iou_threshold=0.3):
+        # 몇 프레임까지 매칭이 안 되어도 track을 유지할지
         self.max_age = max_age
+
+        # 몇 번 이상 매칭된 객체만 안정적인 track으로 볼지
         self.min_hits = min_hits
+
+        # tracker와 detection을 같은 객체로 볼 최소 IoU 기준
         self.iou_threshold = iou_threshold
-        self.tracks = []           # 활성 track 목록
-        self.next_id = 0           # 다음 부여할 ID
-    
+
+        # 현재 살아있는 track 목록
+        self.tracks = []
+
+        # 새 객체에 부여할 다음 ID 번호
+        self.next_id = 1
+
+    # 현재 프레임의 detections를 받아 tracks를 업데이트하는 함수
     def update(self, detections):
         """
-        현재 프레임의 detection 결과를 받아 track을 업데이트하고,
-        현재 추적 중인 객체 목록을 반환.
-        
-        detections: [[x1, y1, x2, y2], ...] 형식의 bbox 목록
-        반환: [[x1, y1, x2, y2, id, hits], ...] 형식의 추적 결과
+        detections: [[x1, y1, x2, y2, conf], ...]
+        return: [[x1, y1, x2, y2, track_id], ...]
         """
-        
-        # ========== 단계 1: IoU 행렬 계산 ==========
-        # 기존 track들과 새로운 detection들 사이의 IoU 계산
-        iou_matrix = np.zeros((len(self.tracks), len(detections)), dtype=np.float32)
-        for t, trk in enumerate(self.tracks):
-            for d, det in enumerate(detections):
-                iou_matrix[t, d] = iou(trk.bbox, det[:4])
-        
-        # ========== 단계 2: Hungarian 알고리즘으로 최적 매칭 ==========
-        # IoU를 비용으로 변환 (음수 = 최소화 문제가 최대화 문제가 되도록)
-        row_ind, col_ind = linear_sum_assignment(-iou_matrix)
-        
-        # ========== 단계 3: 매칭 결과 처리 ==========
-        assigned_tracks = set()
-        assigned_dets = set()
-        
-        for r, c in zip(row_ind, col_ind):
-            # IoU가 임계값 이상인 경우만 유효한 매칭으로 간주
-            if iou_matrix[r, c] >= self.iou_threshold:
-                self.tracks[r].update(detections[c][:4])
-                assigned_tracks.add(r)
-                assigned_dets.add(c)
-        
-        # ========== 단계 4: 미매칭 track 처리 ==========
-        # 현재 프레임에서 detection과 매칭되지 않은 track
-        for t, trk in enumerate(self.tracks):
-            if t not in assigned_tracks:
-                trk.no_losses += 1  # 손실 프레임 증가
-        
-        # ========== 단계 5: 미매칭 detection 처리 ==========
-        # 기존 track과 매칭되지 않은 새 detection
-        for d, det in enumerate(detections):
-            if d not in assigned_dets:
-                self.tracks.append(Track(det[:4], self.next_id))
+
+        # 최종적으로 화면에 표시할 추적 결과 저장
+        updated_tracks = []
+
+        # 아직 track이 하나도 없으면
+        # 현재 detection들을 전부 새 객체로 등록
+        if len(self.tracks) == 0:
+            for det in detections:
+                bbox = det[:4]
+                self.tracks.append(Track(bbox, self.next_id))
                 self.next_id += 1
-        
-        # ========== 단계 6: 오래된 track 제거 ==========
-        # max_age보다 오래 감지되지 않은 track 제거
+
+        else:
+            # detection이 하나 이상 있으면 매칭 수행
+            if len(detections) > 0:
+                # tracker 수 x detection 수 크기의 IoU 행렬 생성
+                iou_matrix = np.zeros((len(self.tracks), len(detections)), dtype=np.float32)
+
+                # 각 tracker와 detection 쌍의 IoU 계산
+                for t, trk in enumerate(self.tracks):
+                    for d, det in enumerate(detections):
+                        iou_matrix[t, d] = iou(trk.bbox, det[:4])
+
+                # Hungarian Algorithm을 사용하기 위해
+                # IoU를 최대화하는 문제를 -IoU 최소화 문제로 바꿔서 계산
+                row_ind, col_ind = linear_sum_assignment(-iou_matrix)
+
+                # 매칭된 tracker와 detection 인덱스를 저장할 집합
+                assigned_tracks = set()
+                assigned_dets = set()
+
+                # Hungarian 결과 중에서 IoU가 threshold 이상인 것만 진짜 매칭으로 인정
+                for r, c in zip(row_ind, col_ind):
+                    if iou_matrix[r, c] >= self.iou_threshold:
+                        self.tracks[r].update(detections[c][:4])
+                        assigned_tracks.add(r)
+                        assigned_dets.add(c)
+
+                # 매칭되지 못한 tracker는 한 프레임 놓친 것으로 처리
+                for t, trk in enumerate(self.tracks):
+                    if t not in assigned_tracks:
+                        trk.no_losses += 1
+
+                # 매칭되지 못한 detection은 새 객체로 등록
+                for d, det in enumerate(detections):
+                    if d not in assigned_dets:
+                        self.tracks.append(Track(det[:4], self.next_id))
+                        self.next_id += 1
+
+            else:
+                # detection이 하나도 없으면 모든 기존 track이 한 프레임씩 손실
+                for trk in self.tracks:
+                    trk.no_losses += 1
+
+        # 너무 오래 매칭되지 않은 track은 제거
         self.tracks = [t for t in self.tracks if t.no_losses <= self.max_age]
-        
-        # ========== 결과 반환 ==========
-        # min_hits 이상 매칭되고 현재 프레임에서 업데이트된 track만 반환
-        results = []
-        for t in self.tracks:
-            if t.no_losses == 0 and t.hits >= self.min_hits:
-                results.append([t.bbox[0], t.bbox[1], t.bbox[2], t.bbox[3], t.id, t.hits])
-        
-        return results
+
+        # 화면 출력용 결과 생성
+        # 충분히 안정적으로 검출된 객체이거나,
+        # 방금 막 검출된 객체는 출력 대상에 포함
+        for trk in self.tracks:
+            if trk.hits >= self.min_hits or trk.no_losses == 0:
+                x1, y1, x2, y2 = trk.bbox
+                updated_tracks.append([int(x1), int(y1), int(x2), int(y2), trk.id])
+
+        # 최종 추적 결과 반환
+        return updated_tracks
 
 
-# ==========================================
-# 4. YOLOv3 설정 및 초기화
-# ==========================================
+# =========================
+# 4. YOLOv3 파일 경로 설정
+# =========================
 
-# YOLOv3 모델 파일 경로
-config_path = '../L06/yolov3.cfg'
-weights_path = '../L06/yolov3.weights'
+# YOLO 가중치 파일 경로
+weights_path = "L06/yolov3.weights"
 
-# 차량 클래스 ID (COCO): car=2, motorbike=3, bus=5, truck=7
-vehicle_ids = {2, 3, 5, 7}
+# YOLO 설정 파일 경로
+config_path = "L06/yolov3.cfg"
 
-# 네트워크 로드
+# 추적할 입력 비디오 경로
+video_path = "L06/slow_traffic_small.mp4"
+
+
+# =========================
+# 5. YOLOv3 네트워크 로드
+# =========================
+
+# cfg와 weights 파일을 이용해 YOLOv3 네트워크 생성
 net = cv2.dnn.readNetFromDarknet(config_path, weights_path)
-net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
-# 출력층 이름 가져오기
+# 네트워크의 전체 레이어 이름 가져오기
 layer_names = net.getLayerNames()
-output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
 
-# 웹캠 열기
-cap = cv2.VideoCapture(0)
-frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-fps = cap.get(cv2.CAP_PROP_FPS)
+# YOLO의 최종 출력 레이어 이름만 추출
+output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
 
-# 추적기 초기화
-sort_tracker = SimpleSORT(max_age=30, min_hits=3, iou_threshold=0.3)
 
-# 객체별 색상 딕셔너리
-colors = {}
+# =========================
+# 6. 추적할 차량 클래스 지정
+# =========================
 
-print("=" * 60)
-print("SORT 알고리즘을 활용한 다중 객체 추적기")
-print("=" * 60)
-print(f"\n[*] YOLOv3 모델 로딩 중...")
-print(f"[✓] Config: {config_path}")
-print(f"[✓] Weights: {weights_path}")
-print(f"[*] 웹캠 연결 중...")
-print(f"[✓] 웹캠 해상도: {frame_width} x {frame_height}, FPS: {fps}")
-print(f"\n[ 종료: ESC 키 또는 Q 키 ]")
-print("=" * 60)
+# COCO 데이터셋 기준 클래스 번호
+# car=2, motorbike=3, bus=5, truck=7
+# 여기서는 차량류만 추적하도록 설정
+vehicle_ids = [2, 3, 5, 7]
 
-frame_count = 0
 
-# ==========================================
-# 5. 메인 루프 - 프레임 처리
-# ==========================================
+# =========================
+# 7. 비디오 열기 + SORT 초기화
+# =========================
 
+# 입력 비디오 파일 열기
+cap = cv2.VideoCapture(video_path)
+
+# 비디오가 열리지 않았으면 오류 메시지 출력 후 종료
+if not cap.isOpened():
+    print("비디오를 열 수 없습니다.")
+    exit()
+
+# 추적기 생성
+# max_age=10: 10프레임까지 안 보여도 유지
+# min_hits=2: 2번 이상 검출되면 안정적인 객체로 판단
+# iou_threshold=0.3: 매칭 기준 IoU
+tracker = SimpleSORT(max_age=10, min_hits=2, iou_threshold=0.3)
+
+
+# =========================
+# 8. 프레임 단위 처리 시작
+# =========================
+
+# 비디오를 한 프레임씩 끝까지 읽기
 while True:
+    # 현재 프레임 읽기
     ret, frame = cap.read()
+
+    # 더 이상 읽을 프레임이 없으면 종료
     if not ret:
         break
-    
-    frame_count += 1
-    
-    # 검출 속도 향상을 위해 프레임 리사이즈
-    resized_frame = cv2.resize(frame, (640, 480))
-    height_resized, width_resized = resized_frame.shape[:2]
-    
-    # 원본 좌표로 복원하기 위한 스케일 계산
-    scale_x = frame_width / width_resized
-    scale_y = frame_height / height_resized
-    
-    # ====== YOLOv3 검출 ======
-    blob = cv2.dnn.blobFromImage(resized_frame, 1/255.0, (416, 416), 
-                                  swapRB=True, crop=False)
+
+    # 현재 프레임의 높이와 너비 얻기
+    height, width = frame.shape[:2]
+
+
+    # =========================
+    # 9. YOLO 입력용 blob 생성
+    # =========================
+
+    # 이미지를 YOLO 입력 형식으로 변환
+    # 1/255로 정규화
+    # 416x416 크기로 resize
+    # swapRB=True: OpenCV BGR -> RGB 순서 교체
+    blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (416, 416), swapRB=True, crop=False)
+
+    # blob을 네트워크 입력으로 설정
     net.setInput(blob)
-    outs = net.forward(output_layers)
-    
-    # 검출 결과 파싱
+
+    # 출력 레이어들에 대해 forward 수행
+    outputs = net.forward(output_layers)
+
+
+    # =========================
+    # 10. 검출 결과 저장용 리스트
+    # =========================
+
+    # 바운딩 박스 목록
     boxes = []
+
+    # 각 박스의 confidence 목록
     confidences = []
-    
-    for out in outs:
-        for detection in out:
+
+
+    # =========================
+    # 11. YOLO 출력 파싱
+    # =========================
+
+    # YOLO 출력은 여러 scale의 결과로 나옴
+    for output in outputs:
+        # 각 detection 벡터 순회
+        for detection in output:
+            # 클래스별 점수 부분
             scores = detection[5:]
+
+            # 가장 점수가 높은 클래스 번호
             class_id = np.argmax(scores)
+
+            # 그 클래스의 confidence
             confidence = scores[class_id]
-            
-            # 차량 클래스이고 신뢰도가 0.5 이상인 경우만 선택
+
+            # 차량 클래스만 남기고 confidence가 0.5보다 큰 것만 사용
             if class_id in vehicle_ids and confidence > 0.5:
-                center_x = int(detection[0] * width_resized)
-                center_y = int(detection[1] * height_resized)
-                w = int(detection[2] * width_resized)
-                h = int(detection[3] * height_resized)
-                
-                # 중심 좌표 → 모서리 좌표 변환
-                x1 = max(0, center_x - w // 2)
-                y1 = max(0, center_y - h // 2)
-                x2 = min(width_resized - 1, center_x + w // 2)
-                y2 = min(height_resized - 1, center_y + h // 2)
-                
+                # 중심 좌표와 폭/높이를 원본 프레임 크기로 변환
+                center_x = int(detection[0] * width)
+                center_y = int(detection[1] * height)
+                w = int(detection[2] * width)
+                h = int(detection[3] * height)
+
+                # 중심 좌표 -> 좌상단 좌표로 변환
+                x = int(center_x - w / 2)
+                y = int(center_y - h / 2)
+
+                # 이미지 경계를 넘지 않도록 보정
+                x1 = max(0, x)
+                y1 = max(0, y)
+                x2 = min(width - 1, x + w)
+                y2 = min(height - 1, y + h)
+
+                # 박스 저장
                 boxes.append([x1, y1, x2, y2])
+
+                # confidence 저장
                 confidences.append(float(confidence))
-    
-    # NMS (중복 박스 제거)
-    if boxes:
-        indices = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
-        detections = []
-        for i in indices:
-            box = boxes[i]
-            # 원본 프레임 좌표로 복원
-            x1_orig = int(box[0] * scale_x)
-            y1_orig = int(box[1] * scale_y)
-            x2_orig = int(box[2] * scale_x)
-            y2_orig = int(box[3] * scale_y)
-            detections.append([x1_orig, y1_orig, x2_orig, y2_orig])
-    else:
-        detections = []
-    
-    # ====== SORT 추적기 업데이트 ======
-    tracked_objects = sort_tracker.update(detections)
-    
-    # ====== 결과 시각화 ======
+
+
+    # =========================
+    # 12. NMS(중복 박스 제거) 적용
+    # =========================
+
+    # SORT에 넣을 최종 detection 결과
+    detections = []
+
+    # 검출된 박스가 하나라도 있으면 NMS 수행
+    if len(boxes) > 0:
+        # OpenCV NMSBoxes는 [x, y, w, h] 형식을 요구하므로 변환
+        boxes_xywh = []
+        for b in boxes:
+            x1, y1, x2, y2 = b
+            boxes_xywh.append([x1, y1, x2 - x1, y2 - y1])
+
+        # confidence 0.5 이상 박스들에 대해
+        # IoU 0.4 기준으로 중복 제거
+        indices = cv2.dnn.NMSBoxes(boxes_xywh, confidences, 0.5, 0.4)
+
+        # 살아남은 박스만 detections에 추가
+        if len(indices) > 0:
+            for i in indices.flatten():
+                x1, y1, x2, y2 = boxes[i]
+                conf = confidences[i]
+                detections.append([x1, y1, x2, y2, conf])
+
+    # detections를 NumPy 배열로 변환
+    # detection이 하나도 없으면 빈 배열 생성
+    detections = np.array(detections) if len(detections) > 0 else np.empty((0, 5))
+
+
+    # =========================
+    # 13. SORT 추적기 업데이트
+    # =========================
+
+    # 현재 프레임의 detection을 추적기에 넣어서
+    # ID가 붙은 추적 결과를 얻음
+    tracked_objects = tracker.update(detections)
+
+
+    # =========================
+    # 14. 추적 결과 시각화
+    # =========================
+
+    # 각 객체의 바운딩 박스와 ID를 화면에 그림
     for obj in tracked_objects:
-        x1, y1, x2, y2, obj_id, hits = obj
-        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-        
-        # 객체 ID별 색상 할당 (없으면 새로 할당)
-        if obj_id not in colors:
-            colors[obj_id] = tuple(np.random.randint(0, 256, 3).tolist())
-        
-        color = colors[obj_id]
-        
-        # 바운딩 박스 그리기
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        
-        # ID 라벨 그리기
-        label = f"ID: {obj_id}"
-        cv2.putText(frame, label, (x1, y1 - 10), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-    
-    # 프레임 번호 표시
-    cv2.putText(frame, f"Frame: {frame_count}", (10, 30),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-    cv2.putText(frame, f"Objects: {len(tracked_objects)}", (10, 70),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-    
-    # 결과 출력
-    cv2.imshow('SORT Object Tracking', frame)
-    
-    # 키 입력 처리
-    key = cv2.waitKey(1) & 0xFF
-    if key == 27 or key == ord('q'):  # ESC 또는 Q
+        x1, y1, x2, y2, obj_id = obj
+
+        # 초록색 사각형 그리기
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+        # 사각형 위쪽에 ID 표시
+        cv2.putText(
+            frame,
+            f"ID: {obj_id}",
+            (x1, max(y1 - 10, 0)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 0),
+            2
+        )
+
+
+    # =========================
+    # 15. 결과 영상 출력
+    # =========================
+
+    # 현재 프레임을 화면에 표시
+    cv2.imshow("YOLOv3 + SORT Tracking", frame)
+
+
+    # =========================
+    # 16. ESC 키 입력 시 종료
+    # =========================
+
+    # 30ms 대기 후 키 입력 확인
+    key = cv2.waitKey(30)
+
+    # ESC 키(27번)가 눌리면 반복 종료
+    if key == 27:
         break
+
+
+# =========================
+# 17. 자원 해제
+# =========================
 
 # 비디오 파일 닫기
 cap.release()
@@ -595,88 +727,149 @@ SORT 알고리즘을 활용한 다중 객체 추적기
 ## 전체 코드
 
 ```python
+# Mediapipe를 활용한 얼굴 랜드마크 추출 및 시각화
+# Dynamic Vision - Practice 16
+
+# OpenCV: 이미지/비디오 처리
 import cv2
+# Mediapipe: Google의 얼굴 인식 프레임워크
 import mediapipe as mp
-import numpy as np
 
-# MediaPipe 초기화
-mp_drawing = mp.solutions.drawing_utils
+# ==================== Mediapipe 초기화 ====================
+
+# Mediapipe의 FaceMesh 모듈을 설정합니다
+# FaceMesh: 얼굴의 468개 3D 랜드마크를 검출합니다
 mp_face_mesh = mp.solutions.face_mesh
+# 검출된 결과를 시각화하기 위한 유틸리티
+mp_drawing = mp.solutions.drawing_utils
+# 그리기 스타일 설정
+mp_drawing_styles = mp.solutions.drawing_styles
 
-# 웹캠 설정
-face_mesh = mp_face_mesh.FaceMesh(
-    static_image_mode=False,
-    max_num_faces=2,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
-)
 
-# 웹캠 연결
-cap = cv2.VideoCapture(0)
+# ==================== 메인 함수 ====================
 
-print("=" * 60)
-print("Mediapipe 얼굴 랜드마크 추출")
-print("=" * 60)
-print("[ 종료: ESC 키 또는 Q 키 ]")
-print("=" * 60)
-
-frame_count = 0
-
-# 메인 루프
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+def main():
+    """메인 함수: Mediapipe를 이용한 얼굴 랜드마크 추출"""
     
-    frame_count += 1
+    print("\n" + "="*60)
+    print("Mediapipe를 활용한 얼굴 랜드마크 추출 및 시각화")
+    print("="*60 + "\n")
     
-    # RGB 변환 (MediaPipe는 RGB 입력 요구)
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    print("[*] 웹캠 연결 중...")
     
-    # 얼굴 랜드마크 검출
-    results = face_mesh.process(rgb_frame)
+    # OpenCV를 사용하여 웹캠으로부터 실시간 영상을 캡처합니다
+    # VideoCapture(0): 기본 웹캠 (0번 카메라)
+    cap = cv2.VideoCapture(0)
     
-    # 결과 시각화
-    if results.multi_face_landmarks:
-        for face_landmarks in results.multi_face_landmarks:
-            # 랜드마크 좌표 추출
-            h, w, c = frame.shape
+    # 웹캠 연결 확인
+    if not cap.isOpened():
+        print("[✗] 웹캠을 열 수 없습니다")
+        return
+    
+    print("[✓] 웹캠 연결 완료\n")
+    print("[ 종료: ESC 키 ]")
+    print("="*60 + "\n")
+    
+    # Mediapipe의 FaceMesh 모듈을 사용하여 얼굴 랜드마크 검출기를 초기화합니다
+    print("[*] Mediapipe FaceMesh 모델 로딩 중...")
+    with mp_face_mesh.FaceMesh(
+        # static_image_mode=False: 비디오 입력 모드 (프레임마다 처리)
+        static_image_mode=False,
+        # max_num_faces=2: 최대 2개의 얼굴 동시 검출
+        max_num_faces=2,
+        # refine_landmarks=True: 상세한 랜드마크 포함 (홍채, 눈썹 등)
+        refine_landmarks=True,
+        # 얼굴 검출 신뢰도 임계값 (50% 이상만 인식)
+        min_detection_confidence=0.5,
+        # 객체 추적 신뢰도 임계값
+        min_tracking_confidence=0.5
+    ) as face_mesh:
+        
+        print("[✓] 모델 로딩 완료\n")
+        
+        # 프레임 카운트
+        frame_count = 0
+        
+        # 실시간 비디오 처리 메인 루프
+        while True:
+            # 웹캠에서 한 프레임 읽기
+            ret, frame = cap.read()
             
-            # 주요 랜드마크만 강조해서 그리기
-            # 눈 (index 33, 133), 코 (34), 입 (78, 308)
-            key_points = [33, 133, 34, 78, 308]
+            # 프레임 읽기 실패 확인
+            if not ret:
+                print("[✗] 프레임을 읽을 수 없습니다")
+                break
             
-            for idx in key_points:
-                landmark = face_landmarks.landmark[idx]
-                x = int(landmark.x * w)
-                y = int(landmark.y * h)
-                cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
+            frame_count += 1
+            # 프레임의 높이, 너비, 채널 수 획득
+            height, width, _ = frame.shape
             
-            # 전체 랜드마크 그리기
-            mp_drawing.draw_landmarks(
-                frame,
-                face_landmarks,
-                mp_face_mesh.FACEMESH_CONTOURS,
-                mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1, circle_radius=1),
-                mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=1)
-            )
+            # BGR을 RGB로 변환 (Mediapipe는 RGB 입력을 요구)
+            # OpenCV는 BGR 순서로 이미지를 저장하므로 변환 필요
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # 얼굴 랜드마크를 검출합니다
+            # process(): Mediapipe의 핵심 함수로 실제 얼굴 인식 수행
+            results = face_mesh.process(frame_rgb)
+            
+            # 검출된 얼굴 랜드마크를 실시간 영상에 점으로 표시합니다
+            # 검출된 얼굴의 개수
+            num_faces = 0
+            
+            # 얼굴이 검출되었는지 확인
+            if results.multi_face_landmarks:
+                # 검출된 각 얼굴에 대해 처리
+                for face_landmarks in results.multi_face_landmarks:
+                    # 검출된 얼굴 수 카운트
+                    num_faces += 1
+                    
+                    # 메시와 연결선을 그립니다
+                    # 468개의 얼굴 포인트가 삼각형으로 연결된 메시 표시
+                    mp_drawing.draw_landmarks(
+                        image=frame,
+                        landmark_list=face_landmarks,
+                        # FACEMESH_TESSELATION: 얼굴 표면의 삼각형 메시
+                        connections=mp_face_mesh.FACEMESH_TESSELATION,
+                        landmark_drawing_spec=None,  # 랜드마크 점은 그리지 않음
+                        connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style()
+                    )
+                    
+                    # 각 랜드마크를 점으로 시각화합니다
+                    # 468개의 개별 포인트를 노란색 점으로 표시
+                    for landmark in face_landmarks.landmark:
+                        # 정규화된 좌표(0~1)를 픽셀 좌표로 변환
+                        x = int(landmark.x * width)
+                        y = int(landmark.y * height)
+                        # 반지름 1의 원(점)으로 표시, 채워진 원(-1)
+                        # BGR 순서: (255, 255, 0) = 노란색
+                        cv2.circle(frame, (x, y), 1, (255, 255, 0), -1)
+            
+            # 프레임 정보 표시
+            # 현재 처리 중인 프레임 번호와 검출된 얼굴 수 표시
+            info_text = f"Frame: {frame_count} | Detected Faces: {num_faces}"
+            cv2.putText(frame, info_text, (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            # 처리된 프레임을 화면에 출력
+            cv2.imshow('Face Landmarks Detection with Mediapipe', frame)
+            
+            # ESC 키를 누르면 프로그램이 종료되도록 설정합니다
+            # cv2.waitKey(1): 1ms 동안 키 입력 대기
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:  # ESC 키의 ASCII 코드 = 27
+                break
     
-    # 프레임 번호 표시
-    cv2.putText(frame, f"Frame: {frame_count}", (10, 30),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-    
-    # 결과 출력
-    cv2.imshow('Face Mesh', frame)
-    
-    # 키 입력 처리
-    key = cv2.waitKey(1) & 0xFF
-    if key == 27 or key == ord('q'):  # ESC 또는 Q
-        break
+    # 리소스 해제
+    # 웹캠 연결 종료
+    cap.release()
+    # 모든 OpenCV 창 닫기
+    cv2.destroyAllWindows()
+    print("\n[✓] 프로그램 종료")
 
-# 리소스 해제
-cap.release()
-cv2.destroyAllWindows()
-face_mesh.close()
+
+if __name__ == "__main__":
+    main()
+
 ```
 
 ## 주요 코드 설명
