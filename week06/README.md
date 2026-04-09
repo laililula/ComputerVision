@@ -720,6 +720,8 @@ SORT 알고리즘을 활용한 다중 객체 추적기
 - IoU 기반 매칭으로 안정적 ID 유지
 - 프레임 드롭이 발생해도 추적 지속 가능 (max_age 파라미터로 조정)
 
+<img width="1262" height="761" alt="image" src="https://github.com/user-attachments/assets/708998e3-5fe5-48d4-8037-9709ef88e433" />
+
 ---
 
 # Practice 16: Mediapipe를 활용한 얼굴 랜드마크 추출 및 시각화
@@ -933,5 +935,7 @@ pip install mediapipe
 - 웹캠에서 얼굴을 인식하고 468개의 랜드마크 표시
 - 각 랜드마크가 연결되어 3D 얼굴 메시 형태로 시각화
 - 실시간으로 얼굴 움직임 추적
+
+<img width="1263" height="991" alt="image" src="https://github.com/user-attachments/assets/e9f068eb-c184-46ea-933a-c681f2ce8b22" />
 
 ---
