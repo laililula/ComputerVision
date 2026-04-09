@@ -1,408 +1,419 @@
-# SORT 알고리즘을 활용한 다중 객체 추적기 구현
-# Dynamic Vision - Practice 15
-
+# OpenCV: 영상 읽기, DNN 객체 검출, 화면 출력에 사용
 import cv2
+
+# NumPy: 배열 처리, IoU 행렬 생성, 검출 결과 저장에 사용
 import numpy as np
+
+# Hungarian Algorithm: tracker와 detection을 최적으로 매칭하는 데 사용
 from scipy.optimize import linear_sum_assignment
-import os
 
-# ==================== SORT 추적기 클래스 ====================
 
-class KalmanBoxTracker:
-    """
-    칼만 필터를 사용한 객체 추적 클래스입니다.
-    bounding box의 위치와 속도를 예측합니다.
-    """
-    count = 0  # 추적 객체의 고유 ID 카운터
-    
-    def __init__(self, bbox):
-        """
-        bbox: [x1, y1, x2, y2] 형태의 경계 상자
-        """
+# =========================
+# 1. IoU 계산 함수
+# =========================
+
+# 두 개의 바운딩 박스(bb_test, bb_gt)가 얼마나 겹치는지를
+# IoU(Intersection over Union) 값으로 계산하는 함수
+def iou(bb_test, bb_gt):
+    # 두 박스가 겹치는 영역의 좌상단 x, y
+    xx1 = max(bb_test[0], bb_gt[0])
+    yy1 = max(bb_test[1], bb_gt[1])
+
+    # 두 박스가 겹치는 영역의 우하단 x, y
+    xx2 = min(bb_test[2], bb_gt[2])
+    yy2 = min(bb_test[3], bb_gt[3])
+
+    # 겹치는 영역의 너비와 높이
+    w = max(0., xx2 - xx1)
+    h = max(0., yy2 - yy1)
+
+    # 교집합 면적
+    inter = w * h
+
+    # 첫 번째 박스의 면적
+    area1 = (bb_test[2] - bb_test[0]) * (bb_test[3] - bb_test[1])
+
+    # 두 번째 박스의 면적
+    area2 = (bb_gt[2] - bb_gt[0]) * (bb_gt[3] - bb_gt[1])
+
+    # 합집합 면적
+    union = area1 + area2 - inter
+
+    # 합집합이 0 이하이면 나눗셈 오류 방지를 위해 0 반환
+    if union <= 0:
+        return 0.0
+
+    # IoU = 교집합 / 합집합
+    return inter / union
+
+
+# =========================
+# 2. 간단한 SORT용 Track 클래스
+# =========================
+
+# 하나의 추적 객체(트랙)를 표현하는 클래스
+# bbox: 현재 객체의 바운딩 박스
+# id: 객체 고유 번호
+# hits: 지금까지 성공적으로 매칭된 횟수
+# no_losses: 최근 몇 프레임 동안 검출과 매칭되지 않았는지
+class Track:
+    def __init__(self, bbox, track_id):
+        # 현재 객체의 위치 정보 [x1, y1, x2, y2]
         self.bbox = bbox
-        self.id = KalmanBoxTracker.count
-        KalmanBoxTracker.count += 1
-        self.frames_since_update = 0
-        self.history = []
-        
-    def get_state(self):
-        """현재 경계 상자 반환"""
-        return self.bbox
-    
-    def update(self, new_bbox):
-        """새로운 경계 상자로 위치 업데이트"""
-        self.bbox = new_bbox
-        self.frames_since_update = 0
-        self.history.append(new_bbox)
-    
-    def predict(self):
-        """다음 프레임의 위치 예측 (간단한 선형 외삽)"""
-        # 이전 두 위치의 차이로부터 객체의 이동 벡터(속도)를 계산합니다
-        # 이를 현재 위치에 더해 다음 프레임의 위치를 예측합니다 (칼만 필터 간소화 버전)
-        if len(self.history) > 1:
-            # 마지막 두 위치의 차이를 이용해 위치 변화량 계산
-            dx = self.history[-1][0] - self.history[-2][0]
-            dy = self.history[-1][1] - self.history[-2][1]
-            dw = self.history[-1][2] - self.history[-2][2]
-            dh = self.history[-1][3] - self.history[-2][3]
-            # 현재 위치 + 이전 이동량 = 예측 위치
-            predicted = [
-                self.bbox[0] + dx,
-                self.bbox[1] + dy,
-                self.bbox[2] + dw,
-                self.bbox[3] + dh
-            ]
-        else:
-            # 히스토리가 없으면 현재 위치를 그대로 반환
-            predicted = self.bbox
-        
-        # 이 추적 객체가 업데이트되지 않은 프레임 수를 증가
-        self.frames_since_update += 1
-        return predicted
-    
-    def increment_age(self):
-        """업데이트되지 않은 프레임 카운트 증가"""
-        self.frames_since_update += 1
+
+        # 이 객체의 고유 ID
+        self.id = track_id
+
+        # 첫 생성 시 매칭 횟수는 1
+        self.hits = 1
+
+        # 아직 잃어버린 적 없으므로 0
+        self.no_losses = 0
+
+    # 기존 track이 새 detection과 매칭되었을 때 정보 갱신
+    def update(self, bbox):
+        # 바운딩 박스를 새 위치로 갱신
+        self.bbox = bbox
+
+        # 성공적으로 다시 매칭되었으므로 hits 증가
+        self.hits += 1
+
+        # 놓친 프레임 수 초기화
+        self.no_losses = 0
 
 
-class Sort:
-    """
-    SORT 추적기: Simple Online and Realtime Tracking
-    칼만 필터와 헝가리안 알고리즘을 사용하여 객체를 추적합니다.
-    """
-    def __init__(self, max_age=30, min_hits=3):
-        """
-        max_age: 추적 객체의 최대 나이 (프레임 단위)
-        min_hits: 객체를 인정하기 위한 최소 감지 횟수
-        """
-        self.trackers = []
-        self.frame_count = 0
+# =========================
+# 3. 간단한 SORT 클래스
+# =========================
+
+# SORT의 핵심 아이디어를 단순화한 추적기 클래스
+# 원본 SORT처럼 Kalman Filter는 사용하지 않고,
+# IoU 기반 매칭과 생존 시간 관리만으로 구현
+class SimpleSORT:
+    def __init__(self, max_age=10, min_hits=3, iou_threshold=0.3):
+        # 몇 프레임까지 매칭이 안 되어도 track을 유지할지
         self.max_age = max_age
+
+        # 몇 번 이상 매칭된 객체만 안정적인 track으로 볼지
         self.min_hits = min_hits
-    
-    def iou(self, bbox1, bbox2):
-        """
-        두 경계 상자 간의 IoU (Intersection over Union) 계산
-        bbox: [x1, y1, x2, y2] 형태
-        
-        IoU는 두 객체가 얼마나 겹치는지 나타내는 지표입니다.
-        이전 프레임의 객체와 현재 프레임의 검출 결과를 비교할 때 사용됩니다.
-        """
-        # 두 경계 상자의 교집합 영역의 좌상단 좌표 계산
-        x1_inter = max(bbox1[0], bbox2[0])
-        y1_inter = max(bbox1[1], bbox2[1])
-        # 두 경계 상자의 교집합 영역의 우하단 좌표 계산
-        x2_inter = min(bbox1[2], bbox2[2])
-        y2_inter = min(bbox1[3], bbox2[3])
-        
-        # 교집합이 없으면 (겹치는 부분이 없으면) IoU = 0
-        if x2_inter < x1_inter or y2_inter < y1_inter:
-            return 0.0
-        
-        # 교집합의 면적 계산
-        inter_area = (x2_inter - x1_inter) * (y2_inter - y1_inter)
-        
-        # 각 경계 상자의 면적 계산
-        bbox1_area = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
-        bbox2_area = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
-        # 두 경계 상자의 합집합 면적 = 면적1 + 면적2 - 교집합
-        union_area = bbox1_area + bbox2_area - inter_area
-        
-        if union_area == 0:
-            return 0.0
-        
-        # IoU = 교집합 면적 / 합집합 면적
-        return inter_area / union_area
-    
+
+        # tracker와 detection을 같은 객체로 볼 최소 IoU 기준
+        self.iou_threshold = iou_threshold
+
+        # 현재 살아있는 track 목록
+        self.tracks = []
+
+        # 새 객체에 부여할 다음 ID 번호
+        self.next_id = 1
+
+    # 현재 프레임의 detections를 받아 tracks를 업데이트하는 함수
     def update(self, detections):
         """
-        새로운 프레임의 검출 결과로 추적 정보 업데이트
-        detections: [[x1, y1, x2, y2, conf], ...] 형태의 배열
-        
-        SORT 알고리즘의 핵심 단계:
-        1. 기존 추적 객체들의 위치를 예측
-        2. 예측 위치와 현재 검출 결과의 유사성을 측정 (IoU 계산)
-        3. 헝가리안 알고리즘으로 최적 매칭 수행
-        4. 매칭된 객체는 업데이트, 미매칭 객체는 새 추적으로 생성
+        detections: [[x1, y1, x2, y2, conf], ...]
+        return: [[x1, y1, x2, y2, track_id], ...]
         """
-        self.frame_count += 1
-        
-        if len(detections) == 0:
-            # 검출된 객체가 없을 때는 모든 추적 객체의 나이 증가
-            for tracker in self.trackers:
-                tracker.increment_age()
-            return []
-        
-        # 현재 추적 중인 모든 객체들의 다음 프레임 위치 예측
-        # 각 추적 객체의 predict() 호출로 다음 위치 추정
-        predicted_bboxes = [tracker.predict() for tracker in self.trackers]
-        
-        # IoU를 기반으로 비용 행렬 생성
-        # 행: 기존 추적 객체, 열: 현재 검출 결과
-        # 값: 1 - IoU (낮을수록 유사하므로 최소화 대상)
-        iou_matrix = np.zeros((len(self.trackers), len(detections)))
-        for i, pred_bbox in enumerate(predicted_bboxes):
-            for j, det_bbox in enumerate(detections):
-                # IoU가 높을수록 같은 객체일 가능성이 높으므로, 1 - IoU를 비용으로 사용
-                iou_matrix[i, j] = 1 - self.iou(pred_bbox, det_bbox[:4])
-        
-        # 헝가리안 알고리즘으로 최적 매칭 찾기
-        # 이 알고리즘은 전체 비용이 최소가 되도록 일대일 매칭을 수행합니다
-        if iou_matrix.size > 0:
-            t_indices, d_indices = linear_sum_assignment(iou_matrix)
+
+        # 최종적으로 화면에 표시할 추적 결과 저장
+        updated_tracks = []
+
+        # 아직 track이 하나도 없으면
+        # 현재 detection들을 전부 새 객체로 등록
+        if len(self.tracks) == 0:
+            for det in detections:
+                bbox = det[:4]
+                self.tracks.append(Track(bbox, self.next_id))
+                self.next_id += 1
+
         else:
-            t_indices, d_indices = np.array([], dtype=int), np.array([], dtype=int)
-        
-        # 매칭된 추적 객체와 검출 결과 업데이트
-        # 매칭되면 추적 객체의 위치를 새 검출 결과로 업데이트
-        matched_detection_indices = set()
-        for t_idx, d_idx in zip(t_indices, d_indices):
-            # IoU 임계값 0.5 이상인 경우만 같은 객체로 판단
-            if iou_matrix[t_idx, d_idx] < 0.5:
-                self.trackers[t_idx].update(detections[d_idx][:4])
-                matched_detection_indices.add(d_idx)
+            # detection이 하나 이상 있으면 매칭 수행
+            if len(detections) > 0:
+                # tracker 수 x detection 수 크기의 IoU 행렬 생성
+                iou_matrix = np.zeros((len(self.tracks), len(detections)), dtype=np.float32)
+
+                # 각 tracker와 detection 쌍의 IoU 계산
+                for t, trk in enumerate(self.tracks):
+                    for d, det in enumerate(detections):
+                        iou_matrix[t, d] = iou(trk.bbox, det[:4])
+
+                # Hungarian Algorithm을 사용하기 위해
+                # IoU를 최대화하는 문제를 -IoU 최소화 문제로 바꿔서 계산
+                row_ind, col_ind = linear_sum_assignment(-iou_matrix)
+
+                # 매칭된 tracker와 detection 인덱스를 저장할 집합
+                assigned_tracks = set()
+                assigned_dets = set()
+
+                # Hungarian 결과 중에서 IoU가 threshold 이상인 것만 진짜 매칭으로 인정
+                for r, c in zip(row_ind, col_ind):
+                    if iou_matrix[r, c] >= self.iou_threshold:
+                        self.tracks[r].update(detections[c][:4])
+                        assigned_tracks.add(r)
+                        assigned_dets.add(c)
+
+                # 매칭되지 못한 tracker는 한 프레임 놓친 것으로 처리
+                for t, trk in enumerate(self.tracks):
+                    if t not in assigned_tracks:
+                        trk.no_losses += 1
+
+                # 매칭되지 못한 detection은 새 객체로 등록
+                for d, det in enumerate(detections):
+                    if d not in assigned_dets:
+                        self.tracks.append(Track(det[:4], self.next_id))
+                        self.next_id += 1
+
             else:
-                # 일치도가 낮으면 업데이트하지 않고 나이만 증가
-                self.trackers[t_idx].increment_age()
-        
-        # 매칭되지 않은 추적 객체들의 나이 증가
-        # 이들이 max_age를 초과하면 나중에 제거됩니다
-        for i, tracker in enumerate(self.trackers):
-            if i not in t_indices:
-                tracker.increment_age()
-        
-        # 매칭되지 않은 검출 결과를 새로운 추적 객체로 생성
-        # 화면에 새로 나타난 객체는 새로운 추적 시작
-        for j, detection in enumerate(detections):
-            if j not in matched_detection_indices:
-                new_tracker = KalmanBoxTracker(detection[:4])
-                self.trackers.append(new_tracker)
-        
-        # 너무 오래된 추적 객체 제거
-        # max_age 이상 업데이트되지 않은 객체는 화면을 벗어난 것으로 간주
-        self.trackers = [t for t in self.trackers 
-                        if t.frames_since_update <= self.max_age]
-        
-        # 결과 반환 (최소 감지 횟수를 만족하는 객체만)
-        # 최근 업데이트된 객체(frames_since_update == 0)만 반환
-        result = []
-        for tracker in self.trackers:
-            if tracker.frames_since_update == 0:
-                bbox = tracker.get_state()
-                result.append([bbox[0], bbox[1], bbox[2], bbox[3], tracker.id])
-        
-        return result
+                # detection이 하나도 없으면 모든 기존 track이 한 프레임씩 손실
+                for trk in self.tracks:
+                    trk.no_losses += 1
+
+        # 너무 오래 매칭되지 않은 track은 제거
+        self.tracks = [t for t in self.tracks if t.no_losses <= self.max_age]
+
+        # 화면 출력용 결과 생성
+        # 충분히 안정적으로 검출된 객체이거나,
+        # 방금 막 검출된 객체는 출력 대상에 포함
+        for trk in self.tracks:
+            if trk.hits >= self.min_hits or trk.no_losses == 0:
+                x1, y1, x2, y2 = trk.bbox
+                updated_tracks.append([int(x1), int(y1), int(x2), int(y2), trk.id])
+
+        # 최종 추적 결과 반환
+        return updated_tracks
 
 
-# ==================== YOLOv3 객체 검출기 ====================
+# =========================
+# 4. YOLOv3 파일 경로 설정
+# =========================
 
-class YOLOv3Detector:
-    """YOLOv3를 사용한 객체 검출기"""
-    def __init__(self, config_path, weights_path, conf_threshold=0.5, nms_threshold=0.4):
-        """
-        YOLOv3 모델 초기화
-        config_path: yolov3.cfg 파일 경로
-        weights_path: yolov3.weights 파일 경로
-        """
-        print("[*] YOLOv3 모델 로딩 중...")
-        self.net = cv2.dnn.readNetFromDarknet(config_path, weights_path)
-        self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-        self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-        
-        self.conf_threshold = conf_threshold
-        self.nms_threshold = nms_threshold
-        print(f"[✓] YOLOv3 모델 로딩 완료")
-    
-    def detect(self, frame):
-        """
-        프레임에서 객체 검출
-        반환: [[x1, y1, x2, y2, confidence], ...]
-        
-        YOLOv3 모델을 사용하여 프레임의 모든 객체를 검출합니다.
-        """
-        height, width = frame.shape[:2]
-        
-        # YOLOv3 입력을 위해 이미지를 blob으로 변환
-        # YOLO는 정확한 416x416 크기의 입력이 필요합니다
-        # 픽셀값을 0~1로 정규화하고, RGB 순서로 변환합니다
-        blob = cv2.dnn.blobFromImage(frame, 1/255.0, (416, 416), 
-                                     swapRB=True, crop=False)
-        self.net.setInput(blob)
-        
-        # 신경망의 모든 출력층 이름 가져오기
-        output_layers = self.net.getUnconnectedOutLayersNames()
-        
-        # 신경망에서 예측 수행
-        outs = self.net.forward(output_layers)
-        
-        # 검출된 객체들의 경계 상자와 신뢰도 저장
-        boxes = []
-        confidences = []
-        
-        # 모든 출력층의 결과 처리
-        for out in outs:
-            for detection in out:
-                # 각 detection은 [x, y, w, h, confidence, class_scores...]
-                # detection[5:]는 각 클래스의 신뢰도 점수입니다
-                scores = detection[5:]
-                # 가장 높은 신뢰도를 가진 클래스 선택
-                class_id = np.argmax(scores)
-                # 선택된 클래스의 신뢰도
-                confidence = scores[class_id]
-                
-                # 신뢰도 임계값을 넘은 것만 처리
-                if confidence > self.conf_threshold:
-                    # 중심 좌표(정규화 좌표)를 픽셀 좌표로 변환
-                    center_x = int(detection[0] * width)
-                    center_y = int(detection[1] * height)
-                    w = int(detection[2] * width)
-                    h = int(detection[3] * height)
-                    
-                    # 중심 좌표를 좌상단-우하단 좌표로 변환
-                    x1 = max(0, center_x - w // 2)
-                    y1 = max(0, center_y - h // 2)
-                    x2 = min(width, center_x + w // 2)
-                    y2 = min(height, center_y + h // 2)
-                    
-                    boxes.append([x1, y1, x2, y2])
-                    confidences.append(float(confidence))
-        
-        # NMS (Non-Maximum Suppression): 중복된 검출 제거
-        # 겹치는 여러 상자 중 가장 신뢰도가 높은 것만 유지
-        indices = cv2.dnn.NMSBoxes(boxes, confidences, 
-                                   self.conf_threshold, self.nms_threshold)
-        
-        # NMS 후 남은 검출 결과만 반환
-        detections = []
+# YOLO 가중치 파일 경로
+weights_path = "L06/yolov3.weights"
+
+# YOLO 설정 파일 경로
+config_path = "L06/yolov3.cfg"
+
+# 추적할 입력 비디오 경로
+video_path = "L06/slow_traffic_small.mp4"
+
+
+# =========================
+# 5. YOLOv3 네트워크 로드
+# =========================
+
+# cfg와 weights 파일을 이용해 YOLOv3 네트워크 생성
+net = cv2.dnn.readNetFromDarknet(config_path, weights_path)
+
+# 네트워크의 전체 레이어 이름 가져오기
+layer_names = net.getLayerNames()
+
+# YOLO의 최종 출력 레이어 이름만 추출
+output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
+
+
+# =========================
+# 6. 추적할 차량 클래스 지정
+# =========================
+
+# COCO 데이터셋 기준 클래스 번호
+# car=2, motorbike=3, bus=5, truck=7
+# 여기서는 차량류만 추적하도록 설정
+vehicle_ids = [2, 3, 5, 7]
+
+
+# =========================
+# 7. 비디오 열기 + SORT 초기화
+# =========================
+
+# 입력 비디오 파일 열기
+cap = cv2.VideoCapture(video_path)
+
+# 비디오가 열리지 않았으면 오류 메시지 출력 후 종료
+if not cap.isOpened():
+    print("비디오를 열 수 없습니다.")
+    exit()
+
+# 추적기 생성
+# max_age=10: 10프레임까지 안 보여도 유지
+# min_hits=2: 2번 이상 검출되면 안정적인 객체로 판단
+# iou_threshold=0.3: 매칭 기준 IoU
+tracker = SimpleSORT(max_age=10, min_hits=2, iou_threshold=0.3)
+
+
+# =========================
+# 8. 프레임 단위 처리 시작
+# =========================
+
+# 비디오를 한 프레임씩 끝까지 읽기
+while True:
+    # 현재 프레임 읽기
+    ret, frame = cap.read()
+
+    # 더 이상 읽을 프레임이 없으면 종료
+    if not ret:
+        break
+
+    # 현재 프레임의 높이와 너비 얻기
+    height, width = frame.shape[:2]
+
+
+    # =========================
+    # 9. YOLO 입력용 blob 생성
+    # =========================
+
+    # 이미지를 YOLO 입력 형식으로 변환
+    # 1/255로 정규화
+    # 416x416 크기로 resize
+    # swapRB=True: OpenCV BGR -> RGB 순서 교체
+    blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (416, 416), swapRB=True, crop=False)
+
+    # blob을 네트워크 입력으로 설정
+    net.setInput(blob)
+
+    # 출력 레이어들에 대해 forward 수행
+    outputs = net.forward(output_layers)
+
+
+    # =========================
+    # 10. 검출 결과 저장용 리스트
+    # =========================
+
+    # 바운딩 박스 목록
+    boxes = []
+
+    # 각 박스의 confidence 목록
+    confidences = []
+
+
+    # =========================
+    # 11. YOLO 출력 파싱
+    # =========================
+
+    # YOLO 출력은 여러 scale의 결과로 나옴
+    for output in outputs:
+        # 각 detection 벡터 순회
+        for detection in output:
+            # 클래스별 점수 부분
+            scores = detection[5:]
+
+            # 가장 점수가 높은 클래스 번호
+            class_id = np.argmax(scores)
+
+            # 그 클래스의 confidence
+            confidence = scores[class_id]
+
+            # 차량 클래스만 남기고 confidence가 0.5보다 큰 것만 사용
+            if class_id in vehicle_ids and confidence > 0.5:
+                # 중심 좌표와 폭/높이를 원본 프레임 크기로 변환
+                center_x = int(detection[0] * width)
+                center_y = int(detection[1] * height)
+                w = int(detection[2] * width)
+                h = int(detection[3] * height)
+
+                # 중심 좌표 -> 좌상단 좌표로 변환
+                x = int(center_x - w / 2)
+                y = int(center_y - h / 2)
+
+                # 이미지 경계를 넘지 않도록 보정
+                x1 = max(0, x)
+                y1 = max(0, y)
+                x2 = min(width - 1, x + w)
+                y2 = min(height - 1, y + h)
+
+                # 박스 저장
+                boxes.append([x1, y1, x2, y2])
+
+                # confidence 저장
+                confidences.append(float(confidence))
+
+
+    # =========================
+    # 12. NMS(중복 박스 제거) 적용
+    # =========================
+
+    # SORT에 넣을 최종 detection 결과
+    detections = []
+
+    # 검출된 박스가 하나라도 있으면 NMS 수행
+    if len(boxes) > 0:
+        # OpenCV NMSBoxes는 [x, y, w, h] 형식을 요구하므로 변환
+        boxes_xywh = []
+        for b in boxes:
+            x1, y1, x2, y2 = b
+            boxes_xywh.append([x1, y1, x2 - x1, y2 - y1])
+
+        # confidence 0.5 이상 박스들에 대해
+        # IoU 0.4 기준으로 중복 제거
+        indices = cv2.dnn.NMSBoxes(boxes_xywh, confidences, 0.5, 0.4)
+
+        # 살아남은 박스만 detections에 추가
         if len(indices) > 0:
             for i in indices.flatten():
-                detections.append(boxes[i] + [confidences[i]])
-        
-        return detections
+                x1, y1, x2, y2 = boxes[i]
+                conf = confidences[i]
+                detections.append([x1, y1, x2, y2, conf])
+
+    # detections를 NumPy 배열로 변환
+    # detection이 하나도 없으면 빈 배열 생성
+    detections = np.array(detections) if len(detections) > 0 else np.empty((0, 5))
 
 
-# ==================== 메인 함수 ====================
+    # =========================
+    # 13. SORT 추적기 업데이트
+    # =========================
 
-def main():
-    """메인 함수: SORT를 이용한 다중 객체 추적"""
-    
-    print("\n" + "="*60)
-    print("SORT 알고리즘을 활용한 다중 객체 추적기")
-    print("="*60 + "\n")
-    
-    # YOLOv3 모델 파일 경로 설정
-    config_path = r"C:\Users\alsrb\ComputerVision\L06\yolov3.cfg"
-    weights_path = r"C:\Users\alsrb\ComputerVision\L06\yolov3.weights"
-    
-    # 파일 존재 확인
-    if not os.path.exists(config_path):
-        print(f"[✗] 설정 파일을 찾을 수 없습니다: {config_path}")
-        return
-    if not os.path.exists(weights_path):
-        print(f"[✗] 가중치 파일을 찾을 수 없습니다: {weights_path}")
-        return
-    
-    # YOLOv3 검출기 초기화
-    # 신경망 구조와 사전 훈련된 가중치 로드
-    try:
-        detector = YOLOv3Detector(config_path, weights_path)
-    except Exception as e:
-        print(f"[✗] YOLOv3 초기화 실패: {e}")
-        return
-    
-    # SORT 추적기 초기화
-    # max_age: 추적 유지 시간(프레임), min_hits: 객체 인정 기준
-    sort_tracker = Sort(max_age=30, min_hits=3)
-    
-    # 웹캠 연결
-    print("[*] 웹캠 연결 중...")
-    cap = cv2.VideoCapture(0)
-    
-    if not cap.isOpened():
-        print("[✗] 웹캠을 열 수 없습니다")
-        return
-    
-    print("[✓] 웹캠 연결 완료\n")
-    print("[ 종료: ESC 키 또는 Q 키 ]")
-    print("="*60 + "\n")
-    
-    # 추적 객체마다 다른 색상 할당을 위한 딕셔너리
-    colors = {}
-    
-    # 비디오 처리 메인 루프
-    frame_count = 0
-    while True:
-        # 웹캠에서 프레임 읽기
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        frame_count += 1
-        height, width = frame.shape[:2]
-        
-        # 처리 속도 향상을 위해 프레임 크기 조정
-        # 원본 크기를 유지하기 위해 비율을 계산합니다
-        resized_frame = cv2.resize(frame, (640, 480))
-        scale_x = width / 640
-        scale_y = height / 480
-        
-        # YOLOv3로 객체 검출
-        # 리사이즈된 프레임에서 검출하므로 좌표 변환 필요
-        detections = detector.detect(resized_frame)
-        
-        # 검출 좌표를 원본 프레임 크기로 변환
-        scaled_detections = []
-        for det in detections:
-            scaled_det = [
-                det[0] * scale_x,
-                det[1] * scale_y,
-                det[2] * scale_x,
-                det[3] * scale_y,
-                det[4]
-            ]
-            scaled_detections.append(scaled_det)
-        
-        # SORT로 추적 정보 업데이트
-        # 현재 프레임의 검출 결과를 기반으로 추적 객체 매칭
-        tracked_objects = sort_tracker.update(scaled_detections)
-        
-        # 추적된 객체들을 원본 프레임에 시각화
-        for obj in tracked_objects:
-            x1, y1, x2, y2, obj_id = map(int, obj)
-            
-            # 객체마다 고유한 색상 할당
-            # 같은 ID는 같은 색상으로 표시되어 추적이 명확합니다
-            if obj_id not in colors:
-                colors[obj_id] = tuple(np.random.randint(0, 255, 3).tolist())
-            
-            color = colors[obj_id]
-            
-            # 경계 상자 그리기
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            
-            # 객체 ID 표시
-            label = f"ID: {obj_id}"
-            cv2.putText(frame, label, (x1, y1 - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-        
-        # 프레임 정보 표시 (현재 프레임 번호, 추적 객체 수)
-        info_text = f"Frame: {frame_count} | Tracked Objects: {len(tracked_objects)}"
-        cv2.putText(frame, info_text, (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        
-        # 처리된 프레임을 화면에 표시
-        cv2.imshow('Multi-Object Tracking with SORT', frame)
-        
-        # 키 입력 처리
-        key = cv2.waitKey(1) & 0xFF
-        if key == 27 or key == ord('q'):  # ESC 또는 Q 키
-            break
-    
-    # 리소스 해제
-    cap.release()
-    cv2.destroyAllWindows()
-    print("\n[✓] 프로그램 종료")
+    # 현재 프레임의 detection을 추적기에 넣어서
+    # ID가 붙은 추적 결과를 얻음
+    tracked_objects = tracker.update(detections)
 
 
-if __name__ == "__main__":
-    main()
+    # =========================
+    # 14. 추적 결과 시각화
+    # =========================
+
+    # 각 객체의 바운딩 박스와 ID를 화면에 그림
+    for obj in tracked_objects:
+        x1, y1, x2, y2, obj_id = obj
+
+        # 초록색 사각형 그리기
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+        # 사각형 위쪽에 ID 표시
+        cv2.putText(
+            frame,
+            f"ID: {obj_id}",
+            (x1, max(y1 - 10, 0)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 0),
+            2
+        )
+
+
+    # =========================
+    # 15. 결과 영상 출력
+    # =========================
+
+    # 현재 프레임을 화면에 표시
+    cv2.imshow("YOLOv3 + SORT Tracking", frame)
+
+
+    # =========================
+    # 16. ESC 키 입력 시 종료
+    # =========================
+
+    # 30ms 대기 후 키 입력 확인
+    key = cv2.waitKey(30)
+
+    # ESC 키(27번)가 눌리면 반복 종료
+    if key == 27:
+        break
+
+
+# =========================
+# 17. 자원 해제
+# =========================
+
+# 비디오 파일 닫기
+cap.release()
+
+# OpenCV 창 모두 닫기
+cv2.destroyAllWindows()
